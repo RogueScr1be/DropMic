@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalAudioRecorder } from '@/features/recording/use-local-audio-recorder';
 import {
   deriveElapsedMs,
+  isInterruptibleState,
   isRecordingState,
   RECORDING_DURATIONS,
   type RecordingDuration,
@@ -24,6 +25,7 @@ export default function AudioProofScreen() {
   const dispatch = useRecordingStore((store) => store.dispatch);
   const setNow = useRecordingStore((store) => store.setNow);
   const stopInFlight = useRef(false);
+  const startInFlight = useRef(false);
   const countdownTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const elapsed = useMemo(
@@ -60,15 +62,29 @@ export default function AudioProofScreen() {
   }, [audio, dispatch, state]);
 
   const interruptRecording = useCallback(() => {
-    if (stopInFlight.current || !isRecordingState(state)) {
+    if (stopInFlight.current || !isInterruptibleState(state)) {
       return;
     }
 
     stopInFlight.current = true;
-    void audio.stop().catch(() => undefined).finally(() => {
+    if (state === 'countdown') {
+      if (countdownTimer.current) {
+        clearTimeout(countdownTimer.current);
+        countdownTimer.current = null;
+      }
+      dispatch({ type: 'RECORDING_INTERRUPTED', reason: 'The recording was interrupted.' });
       stopInFlight.current = false;
-    });
-    dispatch({ type: 'RECORDING_INTERRUPTED', reason: 'The recording was interrupted.' });
+      return;
+    }
+
+    void audio
+      .stop()
+      .catch(() => null)
+      .then((uri) => (uri ? audio.deleteRecording(uri).catch(() => undefined) : undefined))
+      .finally(() => {
+        dispatch({ type: 'RECORDING_INTERRUPTED', reason: 'The recording was interrupted.' });
+        stopInFlight.current = false;
+      });
   }, [audio, dispatch, state]);
 
   useEffect(() => {
@@ -99,7 +115,7 @@ export default function AudioProofScreen() {
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
-      if (nextState !== 'active' && state === 'recording') {
+      if (nextState !== 'active' && isInterruptibleState(state)) {
         interruptRecording();
       }
     });
@@ -132,40 +148,76 @@ export default function AudioProofScreen() {
   }, [audio, dispatch]);
 
   const startRecording = useCallback(async () => {
+    if (startInFlight.current || state !== 'ready') {
+      return;
+    }
+
+    startInFlight.current = true;
     dispatch({ type: 'BEGIN_COUNTDOWN' });
     try {
       await audio.prepare();
+      if (useRecordingStore.getState().state !== 'countdown') {
+        startInFlight.current = false;
+        return;
+      }
+
       countdownTimer.current = setTimeout(() => {
+        countdownTimer.current = null;
         void audio
           .start()
-          .then(() => dispatch({ type: 'COUNTDOWN_COMPLETE' }))
+          .then(() => {
+            if (useRecordingStore.getState().state === 'countdown') {
+              dispatch({ type: 'COUNTDOWN_COMPLETE' });
+            } else {
+              void audio.stop().catch(() => undefined);
+            }
+          })
           .catch((startError) =>
-            dispatch({
-              type: 'FAILURE',
-              message: startError instanceof Error ? startError.message : 'Unable to start recording.',
-            }),
+            useRecordingStore.getState().state === 'countdown'
+              ? dispatch({
+                  type: 'FAILURE',
+                  message:
+                    startError instanceof Error ? startError.message : 'Unable to start recording.',
+                })
+              : undefined,
           );
       }, COUNTDOWN_MS);
+      startInFlight.current = false;
     } catch (prepareError) {
+      startInFlight.current = false;
       dispatch({
         type: 'FAILURE',
         message: prepareError instanceof Error ? prepareError.message : 'Unable to prepare recorder.',
       });
     }
-  }, [audio, dispatch]);
+  }, [audio, dispatch, state]);
 
   const retry = useCallback(async () => {
-    if (recordingUri) {
-      await audio.deleteRecording(recordingUri);
+    try {
+      if (recordingUri) {
+        await audio.deleteRecording(recordingUri);
+      }
+      dispatch({ type: 'RETRY' });
+    } catch (deleteError) {
+      dispatch({
+        type: 'FAILURE',
+        message: deleteError instanceof Error ? deleteError.message : 'Unable to delete recording.',
+      });
     }
-    dispatch({ type: 'RETRY' });
   }, [audio, dispatch, recordingUri]);
 
   const deleteRecording = useCallback(async () => {
-    if (recordingUri) {
-      await audio.deleteRecording(recordingUri);
+    try {
+      if (recordingUri) {
+        await audio.deleteRecording(recordingUri);
+      }
+      dispatch({ type: 'DELETE_RECORDING' });
+    } catch (deleteError) {
+      dispatch({
+        type: 'FAILURE',
+        message: deleteError instanceof Error ? deleteError.message : 'Unable to delete recording.',
+      });
     }
-    dispatch({ type: 'DELETE_RECORDING' });
   }, [audio, dispatch, recordingUri]);
 
   const isPermissionDenied = state === 'permission_denied';
@@ -250,7 +302,17 @@ export default function AudioProofScreen() {
             <Text accessibilityRole="header" style={styles.completedText}>
               Recording complete
             </Text>
-            <ActionButton label="Play recording" onPress={() => void audio.play(recordingUri)} />
+            <ActionButton
+              label="Play recording"
+              onPress={() =>
+                void audio.play(recordingUri).catch((playError) =>
+                  dispatch({
+                    type: 'FAILURE',
+                    message: playError instanceof Error ? playError.message : 'Unable to play recording.',
+                  }),
+                )
+              }
+            />
             <ActionButton label="Retry recording" onPress={() => void retry()} />
             <ActionButton label="Delete recording" onPress={() => void deleteRecording()} />
           </View>

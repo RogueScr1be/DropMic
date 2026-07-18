@@ -86,6 +86,12 @@ export function transition(
       return { ...base, state: 'recording', startedAtMs: nowMs, elapsedMs: 0 };
     case 'countdown:CANCEL':
       return { ...base, state: 'ready' };
+    case 'countdown:RECORDING_INTERRUPTED':
+      return {
+        ...base,
+        state: 'interrupted',
+        error: (event as Extract<RecordingEvent, { type: 'RECORDING_INTERRUPTED' }>).reason,
+      };
     case 'recording:STOP_REQUESTED':
       return {
         ...base,
@@ -113,6 +119,7 @@ export function transition(
     case 'recording:FAILURE':
     case 'countdown:FAILURE':
     case 'requesting_permission:FAILURE':
+    case 'completed:FAILURE':
       return {
         ...base,
         state: 'error',
@@ -149,4 +156,8 @@ export function deriveElapsedMs(
 
 export function isRecordingState(state: RecordingState) {
   return state === 'recording';
+}
+
+export function isInterruptibleState(state: RecordingState) {
+  return state === 'countdown' || state === 'recording';
 }

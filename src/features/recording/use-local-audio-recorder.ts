@@ -10,10 +10,14 @@ import {
   RecordingPresets,
 } from 'expo-audio';
 import { File } from 'expo-file-system';
+import { detectWebRecordingMimeType } from './web-recording-format';
 
 const recorderOptions = {
   ...RecordingPresets.HIGH_QUALITY,
   directory: 'document' as const,
+  ...(Platform.OS === 'web'
+    ? { mimeType: detectWebRecordingMimeType() ?? undefined }
+    : {}),
 };
 
 export function useLocalAudioRecorder() {
@@ -63,7 +67,7 @@ export function useLocalAudioRecorder() {
         player.replace(uri);
         lastPlayerUri.current = uri;
       }
-      player.seekTo(0);
+      await player.seekTo(0);
       player.play();
     },
     [player],
