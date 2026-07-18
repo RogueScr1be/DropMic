@@ -40,6 +40,18 @@
 - Cause: macOS accessibility event injection was unavailable in this environment.
 - Resolution: iPhone 16e simulator and iPad Pro 13-inch simulator were build-verified only; no native recording behavior was claimed.
 
+## 2026-07-18 — Simulator dev client attached to an unrelated Metro bundle
+
+- Symptom: direct launch of the installed MicDrop development client displayed a `fast-food-v3` `expo-keep-awake` module error.
+- Cause: the development client retained or resolved an unrelated Metro bundle on the shared LAN port; no native UI automation was available to select the MicDrop URL.
+- Resolution: restarted MicDrop Metro, cleared and reinstalled the simulator app, and verified the limitation persisted. Simulator interaction was not claimed; physical iPhone audio remains the required native gate.
+
+## 2026-07-18 — Browser acceptance harness initially missed the required 30-second target
+
+- Symptom: the first reinforced Chromium attempt waited for automatic completion while the default duration was 60 seconds and the test timeout was 30 seconds.
+- Cause: the acceptance test did not select 30 seconds before starting and used a timeout shorter than the required duration.
+- Resolution: selected the 30-second option and extended only the test timeout. The final Chromium run passed automatic stop, output-size, MIME, interruption, playback, deletion, and retry checks.
+
 ## 2026-07-18 — Native and Safari validation unavailable in this pass
 
 - iPhone, Android, iPad, and Safari require a real device/browser manual run.

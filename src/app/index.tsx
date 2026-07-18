@@ -302,6 +302,9 @@ export default function AudioProofScreen() {
             <Text accessibilityRole="header" style={styles.completedText}>
               Recording complete
             </Text>
+            <Text accessibilityElementsHidden style={styles.recordingMetadata} testID="recording-uri">
+              {recordingUri}
+            </Text>
             <ActionButton
               label="Play recording"
               onPress={() =>
@@ -367,6 +370,7 @@ const styles = StyleSheet.create({
   pressed: { opacity: 0.7 },
   resultActions: { gap: 12 },
   completedText: { color: '#166534', fontSize: 20, fontWeight: '700' },
+  recordingMetadata: { height: 0, opacity: 0, width: 0 },
   processingText: { color: '#374151', fontSize: 16 },
   errorText: { color: '#991b1b', fontSize: 16, lineHeight: 24 },
 });

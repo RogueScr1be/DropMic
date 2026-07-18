@@ -43,3 +43,27 @@ Adapter-local capability detection preserves the UI contract and lets Chromium, 
 ### Refactor trigger
 
 Revisit when Expo exposes the actual MediaRecorder MIME/container through its public adapter API or when Safari and Chromium acceptance evidence establishes a single supported format.
+
+## 2026-07-18 — Prioritized iOS and Chromium support; defer Android and Safari
+
+MicDrop’s initial supported development targets are Chromium desktop, iPhone, and iPad. Android and Safari compatibility are deferred until after the local first-use loop is complete.
+
+### Context
+
+Chromium automated recording is green, and the shared iOS adapter can be built for iPhone and iPad. This environment has no physical iPhone and cannot execute Safari automation. A simulator cannot establish microphone hardware, native interruption, codec, or file-integrity acceptance.
+
+### Tradeoffs
+
+Prioritizing Chromium and iOS keeps R0B focused on the local first-use loop while preserving the shared adapter and avoiding platform-specific business logic. The tradeoff is an explicit temporary support limitation and residual Android/Safari compatibility risk.
+
+### Risk
+
+Android may expose permission, media-service, or file-format differences. Safari may select a different MediaRecorder container or MIME type. These risks do not affect local-only R0B development but do affect public release readiness.
+
+### Revisit trigger
+
+Revisit before public beta or App Store release, or earlier if a prioritized-platform change touches the shared recording adapter.
+
+### Removal criteria
+
+Remove the limitation only after focused Android and Safari validation covers permission, recording, automatic stop, playback, interruption, retry, deletion, non-zero file output, actual file properties, and runtime format, with no critical or high security findings.
