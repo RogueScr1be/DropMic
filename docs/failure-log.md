@@ -56,3 +56,24 @@
 
 - iPhone, Android, iPad, and Safari require a real device/browser manual run.
 - No platform result is claimed until those checks are performed.
+
+## 2026-07-18 — Stale Metro collision during R0B preflight
+
+- Symptom: an unrelated `fast-food-v3` Expo process was running `expo run:ios --device` and could serve the wrong bundle to a MicDrop development client.
+- Cause: shared local Metro processes and ports were not scoped to the repository.
+- Resolution: stopped the unrelated processes before MicDrop validation and added a fixed-port, cache-clearing launcher.
+- Durable guardrail: from `/Users/thewhitley/MicDrop`, run `npm run start:micdrop`; verify `http://127.0.0.1:8082` before launching a simulator. Stop any other Expo/Metro process first.
+
+## 2026-07-18 — Repeat attempts re-requested permission from the ready state
+
+- Symptom: after an interruption or completed take, the next first-use attempt could fail closed when the UI revalidated microphone permission.
+- Cause: the R0A state machine accepted permission requests only from `idle` and `permission_denied`, while R0B intentionally rechecks permission before every local attempt.
+- Resolution: allow `ready:REQUEST_PERMISSION` to enter the existing permission boundary; no adapter change was required.
+- Regression coverage: recording-machine test covers pre-permission duration selection, denial, and a subsequent permission request.
+
+## 2026-07-18 — Late attempt callbacks could race a retry
+
+- Symptom: a stop, start, or interruption callback from the previous attempt could arrive after retry and mutate the new attempt.
+- Cause: asynchronous audio operations outlived the UI attempt that started them.
+- Resolution: the screen now invalidates an operation generation on retry/delete/interruption and checks it before committing asynchronous results.
+- Regression coverage: existing stale-completion state-machine coverage plus Chromium interruption/retry acceptance.

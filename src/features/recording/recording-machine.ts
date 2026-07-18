@@ -71,10 +71,14 @@ export function transition(
       return { ...base, state: 'requesting_permission' };
     case 'permission_denied:REQUEST_PERMISSION':
       return { ...base, state: 'requesting_permission' };
+    case 'ready:REQUEST_PERMISSION':
+      return { ...base, state: 'requesting_permission' };
     case 'requesting_permission:PERMISSION_GRANTED':
       return { ...base, state: 'ready' };
     case 'requesting_permission:PERMISSION_DENIED':
       return { ...base, state: 'permission_denied' };
+    case 'idle:SELECT_DURATION':
+    case 'permission_denied:SELECT_DURATION':
     case 'ready:SELECT_DURATION':
       return {
         ...base,

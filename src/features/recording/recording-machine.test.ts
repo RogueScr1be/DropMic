@@ -20,6 +20,19 @@ describe('recording state machine', () => {
     expect(context.elapsedMs).toBe(30_000);
   });
 
+  it('allows the first-use flow to choose a duration before permission is requested', () => {
+    let context = transition(initialRecordingContext, { type: 'SELECT_DURATION', duration: 30 }, 100);
+    expect(context.selectedDurationSeconds).toBe(30);
+
+    context = transition(context, { type: 'REQUEST_PERMISSION' }, 200);
+    context = transition(context, { type: 'PERMISSION_DENIED' }, 300);
+    context = transition(context, { type: 'SELECT_DURATION', duration: 90 }, 400);
+    expect(context.selectedDurationSeconds).toBe(90);
+
+    context = transition(context, { type: 'REQUEST_PERMISSION' }, 500);
+    expect(context.state).toBe('requesting_permission');
+  });
+
   it('fails closed on invalid transitions', () => {
     expect(() => transition(initialRecordingContext, { type: 'STOP_REQUESTED' }, 100)).toThrow(
       InvalidRecordingTransition,

@@ -10,3 +10,5 @@
 - Acceptance browser tests must select their intended duration and allow the full wall-clock boundary before asserting automatic stop.
 - Validate with `npm run typecheck`, `npm run lint`, `npm test`, `npm run web:export`, and `git diff --check`.
 - Do not claim native or Safari support without a real-device/manual result.
+- Start this repository with `npm run start:micdrop` on port 8082 after stopping unrelated Expo/Metro processes; verify the bundle before opening a simulator.
+- Keep R0B presentation orchestration separate from the audio adapter; only change the adapter for a demonstrated regression.

@@ -41,6 +41,7 @@
   },
   "scripts": {
     "start": "expo start",
+    "start:micdrop": "expo start --dev-client --port 8082 --clear",
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo start --android",
     "ios": "expo start --ios",
