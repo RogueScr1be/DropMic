@@ -97,3 +97,10 @@
 - Symptom: iPhone 16e and iPad Pro 13-inch Release builds succeeded with a warning that a deprecated simulator Metal toolchain search path was missing.
 - Cause: Xcode 26.6 simulator toolchain configuration, outside MicDrop source.
 - Resolution: no source change; both builds completed with zero errors. Revisit if a future Xcode version turns the warning into a build failure.
+
+## 2026-07-18 — R0C.1 live Supabase acceptance could not start
+
+- Symptom: the repository had no configured development Supabase URL, anon key, CLI access token, or running Docker/Postgres stack.
+- Evidence: `npx supabase projects list` returned `LegacyPlatformAuthRequiredError`; environment presence checks were false for all Supabase variables; Docker was unavailable.
+- Resolution: ran all local TypeScript, lint, Jest, Chromium, web-export, and diff checks; performed a sanitized static migration review; made no source or ownership workaround and claimed no live Auth, OTP, RLS, or deletion result.
+- Prevention: before the next acceptance pass, configure disposable non-production project credentials locally, set OTP redirect URLs, authenticate the CLI, and start Docker for pgTAP.

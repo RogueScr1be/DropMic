@@ -18,3 +18,4 @@
 - Keep R0B presentation orchestration separate from the audio adapter; only change the adapter for a demonstrated regression.
 - Run Supabase SQL tests only with a running local Docker stack or configured project; do not claim RLS behavior from static migration inspection.
 - `npx supabase` is available in this environment; the `supabase` binary is not on PATH. Keep `supabase/config.toml` aligned with anonymous local development.
+- Live Supabase acceptance requires disposable project credentials, CLI authentication, OTP redirect configuration, and sanitized evidence; source-level RLS review is never an acceptance result.

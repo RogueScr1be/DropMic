@@ -32,6 +32,12 @@ The current anonymous user is converted with `updateUser`, not replaced with a s
 - `npx supabase test db`: not executed successfully because Docker/Postgres was unavailable.
 - Supabase environment variables were absent, so live Auth/OTP/RLS/deletion behavior remains unverified.
 
+## R0C.1 live security acceptance attempt
+
+The expected commit was confirmed and the worktree was clean. No disposable Supabase project credentials or CLI access token were configured, and Docker was unavailable. Therefore no anonymous UUID, post-conversion UUID, table counts, HTTP status codes, cross-user denial, or deletion evidence was collected.
+
+Static review confirmed the intended source contract: `delete_my_account()` uses `auth.uid()` with `search_path = ''`; public execution is revoked and only `authenticated` is granted execute; all three tables use owner-scoped policies; and the client has no service-role/admin reference. These observations do not substitute for live API evidence.
+
 ## Cost shape
 
 At the current Supabase pricing baseline, the Free plan includes 50,000 MAU and the Pro plan starts at $25/month with 100,000 MAU included; above that, Auth MAU is $0.00325 per MAU. This metadata-only phase adds negligible database volume and no Storage/egress usage. Approximate project baseline: 1,000 users $0 Free / $25 Pro; 10,000 $0 / $25; 100,000 $0 / $25; these figures exclude email provider charges, compute beyond included credits, and any future upload/transcription costs.
