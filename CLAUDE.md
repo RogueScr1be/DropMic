@@ -20,3 +20,4 @@
 - `npx supabase` is available in this environment; the `supabase` binary is not on PATH. Keep `supabase/config.toml` aligned with anonymous local development.
 - Live Supabase acceptance requires disposable project credentials, CLI authentication, OTP redirect configuration, and sanitized evidence; source-level RLS review is never an acceptance result.
 - A public Auth settings response can verify basic provider flags, but migration deployment and security acceptance require authenticated CLI access after confirming the project ref.
+- Treat a successful `updateUser` response as request acceptance only; require a received OTP and exact post-verification UUID comparison before claiming anonymous conversion.

@@ -44,6 +44,8 @@ The supplied public configuration was placed in ignored `.env.local` for project
 
 The CLI could not authenticate, so the migration was not pushed. No OTP conversion, UUID equality, attempt claim, live RLS, REST ownership, redirect, or deletion evidence was collected. The captured UUID is development evidence only and is not used by the app or stored in Postgres.
 
+`auth.updateUser({ email })` accepted a second disposable mailbox, but no OTP arrived within a 90-second `mail.tm` poll. This verifies request acceptance only, not email delivery or identity conversion. The first disposable provider returned HTTP 403. No application workaround was added.
+
 ## Cost shape
 
 At the current Supabase pricing baseline, the Free plan includes 50,000 MAU and the Pro plan starts at $25/month with 100,000 MAU included; above that, Auth MAU is $0.00325 per MAU. This metadata-only phase adds negligible database volume and no Storage/egress usage. Approximate project baseline: 1,000 users $0 Free / $25 Pro; 10,000 $0 / $25; 100,000 $0 / $25; these figures exclude email provider charges, compute beyond included credits, and any future upload/transcription costs.

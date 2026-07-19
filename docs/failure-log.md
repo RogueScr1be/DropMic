@@ -111,3 +111,9 @@
 - Blocker: `npx supabase link --project-ref bxoqbbzabubvdbxqquyt` returned `LegacyPlatformAuthRequiredError` because no personal access token was available.
 - Resolution: wrote only the supplied public URL, publishable key, and project ref to ignored `.env.local`. Did not push migrations or claim OTP, RLS, ownership, or deletion acceptance.
 - Prevention: set `SUPABASE_ACCESS_TOKEN` or complete `npx supabase login` locally, verify the project identity, then run `npx supabase link` and `npx supabase db push`.
+
+## 2026-07-19 — Disposable OTP delivery was not observed
+
+- Flow: created a disposable `mail.tm` mailbox, created an anonymous Supabase session, and called `auth.updateUser({ email })` successfully.
+- Symptom: no OTP message arrived during a 90-second poll. A first disposable provider returned HTTP 403 before mailbox creation.
+- Resolution: no verification, UUID equality, redirect, or account-conversion claim was made. No source change was made; validate SMTP/provider delivery and Auth email templates after migration deployment.
