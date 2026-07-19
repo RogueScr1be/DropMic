@@ -104,3 +104,10 @@
 - Evidence: `npx supabase projects list` returned `LegacyPlatformAuthRequiredError`; environment presence checks were false for all Supabase variables; Docker was unavailable.
 - Resolution: ran all local TypeScript, lint, Jest, Chromium, web-export, and diff checks; performed a sanitized static migration review; made no source or ownership workaround and claimed no live Auth, OTP, RLS, or deletion result.
 - Prevention: before the next acceptance pass, configure disposable non-production project credentials locally, set OTP redirect URLs, authenticate the CLI, and start Docker for pgTAP.
+
+## 2026-07-19 — R0C.2 public Supabase access works but CLI deployment is blocked
+
+- Evidence: the supplied project endpoint returned HTTP 200 from `/auth/v1/settings`; anonymous sign-ins and email auth were enabled. A disposable anonymous session was created successfully and returned a UUID.
+- Blocker: `npx supabase link --project-ref bxoqbbzabubvdbxqquyt` returned `LegacyPlatformAuthRequiredError` because no personal access token was available.
+- Resolution: wrote only the supplied public URL, publishable key, and project ref to ignored `.env.local`. Did not push migrations or claim OTP, RLS, ownership, or deletion acceptance.
+- Prevention: set `SUPABASE_ACCESS_TOKEN` or complete `npx supabase login` locally, verify the project identity, then run `npx supabase link` and `npx supabase db push`.

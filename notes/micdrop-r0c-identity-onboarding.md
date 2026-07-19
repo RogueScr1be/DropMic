@@ -38,6 +38,12 @@ The expected commit was confirmed and the worktree was clean. No disposable Supa
 
 Static review confirmed the intended source contract: `delete_my_account()` uses `auth.uid()` with `search_path = ''`; public execution is revoked and only `authenticated` is granted execute; all three tables use owner-scoped policies; and the client has no service-role/admin reference. These observations do not substitute for live API evidence.
 
+## R0C.2 activation attempt
+
+The supplied public configuration was placed in ignored `.env.local` for project `bxoqbbzabubvdbxqquyt`. The live Auth settings endpoint returned HTTP 200 with anonymous sign-ins and email authentication enabled. A disposable anonymous session was created successfully; captured UUID: `be27c854-f48a-4ed3-bda9-bb806c8e4916`.
+
+The CLI could not authenticate, so the migration was not pushed. No OTP conversion, UUID equality, attempt claim, live RLS, REST ownership, redirect, or deletion evidence was collected. The captured UUID is development evidence only and is not used by the app or stored in Postgres.
+
 ## Cost shape
 
 At the current Supabase pricing baseline, the Free plan includes 50,000 MAU and the Pro plan starts at $25/month with 100,000 MAU included; above that, Auth MAU is $0.00325 per MAU. This metadata-only phase adds negligible database volume and no Storage/egress usage. Approximate project baseline: 1,000 users $0 Free / $25 Pro; 10,000 $0 / $25; 100,000 $0 / $25; these figures exclude email provider charges, compute beyond included credits, and any future upload/transcription costs.
