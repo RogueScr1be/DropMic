@@ -1,7 +1,11 @@
 # MicDrop engineering contract
 
 - Read `AGENTS.md` and the pinned Expo SDK docs before changing platform code.
-- Keep R0A local-only: no Supabase, uploads, transcription, analytics, or background recording.
+- Keep R0C metadata-only: Supabase stores identity/profile/preferences/attempt metadata; audio stays local and is never uploaded.
+- Expose only `EXPO_PUBLIC_SUPABASE_URL` and the publishable anon key to the client; never add a service-role key to app code or env files.
+- Preserve the same anonymous Supabase user through email conversion with `updateUser`; keep pending email and unclaimed attempt recovery in AsyncStorage.
+- Treat attempt claims as owner-scoped, idempotent upserts keyed by `client_attempt_id`; clear local recovery only after a successful claim or explicit deletion.
+- Enforce the 13+ gate before account creation and keep account deletion behind an explicit confirmation.
 - Keep recording transitions explicit and fail closed; derive elapsed time from timestamps.
 - Keep Zustand limited to transient UI/session state. Put testable rules in pure TypeScript.
 - Treat countdown callbacks and local-file cleanup as asynchronous failure boundaries; verify current state before committing late callbacks.
@@ -12,3 +16,5 @@
 - Do not claim native or Safari support without a real-device/manual result.
 - Start this repository with `npm run start:micdrop` on port 8082 after stopping unrelated Expo/Metro processes; verify the bundle before opening a simulator.
 - Keep R0B presentation orchestration separate from the audio adapter; only change the adapter for a demonstrated regression.
+- Run Supabase SQL tests only with a running local Docker stack or configured project; do not claim RLS behavior from static migration inspection.
+- `npx supabase` is available in this environment; the `supabase` binary is not on PATH. Keep `supabase/config.toml` aligned with anonymous local development.

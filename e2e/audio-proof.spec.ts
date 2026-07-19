@@ -24,7 +24,9 @@ test('runs the local first-use loop and keeps the recording on-device', async ({
 
   await page.getByRole('button', { name: 'Play recording' }).click();
   await page.getByRole('button', { name: 'Get a Quick Read' }).click();
-  await expect(page.getByText('Quick Read is coming soon.')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Keep this take with you.' })).toBeVisible();
+  await expect(page.getByText('Your recording stays on this device and is not uploaded or analyzed.')).toBeVisible();
+  await page.getByRole('button', { name: 'Close account setup' }).click();
 
   await page.getByRole('button', { name: 'Delete recording' }).click();
   await expect(page.getByTestId('topic-reveal')).toBeVisible({ timeout: 8_000 });

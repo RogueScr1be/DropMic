@@ -67,3 +67,62 @@ Revisit before public beta or App Store release, or earlier if a prioritized-pla
 ### Removal criteria
 
 Remove the limitation only after focused Android and Safari validation covers permission, recording, automatic stop, playback, interruption, retry, deletion, non-zero file output, actual file properties, and runtime format, with no critical or high security findings.
+
+## 2026-07-18 — Metadata-only local attempt claim
+
+Completed attempts are claimed with topic, selected duration, completed duration, completion time, and a client id. The local URI is deliberately excluded from Postgres and `audio_retained` is forced false for R0C.
+
+### Context
+
+R0B audio remains local. R0C needs account continuity without introducing storage, upload consent, or raw voice-data handling.
+
+### Alternatives considered
+
+- Upload and claim the audio file.
+- Store a local URI path in Postgres.
+- Store only non-sensitive attempt metadata.
+
+### Tradeoffs
+
+Metadata-only claims survive restart and OTP delay while preserving the local audio boundary. They cannot support server-side playback or analysis until a separately consented upload phase is designed. `client_attempt_id` makes retries idempotent.
+
+### Refactor trigger
+
+Revisit only when an explicit analysis/upload consent flow, retention policy, storage bucket, and deletion contract are approved.
+
+## 2026-07-18 — Preserve the anonymous user during email conversion
+
+R0C converts the active anonymous session with `auth.updateUser({ email })` and verifies using the `email_change` OTP type. It does not use a new-user `signInWithOtp` path for conversion.
+
+### Context
+
+The first completed local attempt must remain attributable to the same Supabase user after email verification.
+
+### Alternatives considered
+
+- Create a second user with `signInWithOtp({ shouldCreateUser: true })`.
+- Convert the current session with `updateUser`.
+
+### Tradeoffs
+
+Current-session conversion preserves identity and makes claim idempotency straightforward. It depends on Supabase email-change OTP configuration and must be exercised against a real/local Auth service before release.
+
+### Refactor trigger
+
+Revisit if the configured Supabase Auth version cannot verify email-change OTPs or if product later requires an account-linking flow across providers.
+
+## 2026-07-18 — Client-side account deletion uses a security-definer RPC
+
+The client calls `public.delete_my_account()` with the user session; the function deletes `auth.users`, allowing foreign-key cascades to remove profiles, preferences, and attempts. No service-role key enters the app.
+
+### Context
+
+Supabase client SDKs cannot safely call `auth.admin.deleteUser` without a service-role secret.
+
+### Tradeoffs
+
+The RPC keeps deletion owner-scoped and removes all user metadata in one call, but it requires hosted/local Supabase execution to verify function ownership and Auth privileges.
+
+### Refactor trigger
+
+Move deletion to a reviewed Edge Function only if the target Supabase deployment disallows the security-definer function or requires an audited deletion workflow.

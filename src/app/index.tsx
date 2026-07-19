@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState, Animated, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { SignupFlow } from '@/features/auth/SignupFlow';
+import { clearUnclaimedAttempt, createClientAttemptId, getUnclaimedAttempt, saveUnclaimedAttempt, type UnclaimedAttempt } from '@/features/auth/auth-recovery';
 import { PREPARATION_COUNTDOWN_MS, formatCountdownNumber, formatSpeakingTime, phaseForRecordingState, type FirstUsePhase } from '@/features/first-use/first-use-flow';
 import { SplashReveal } from '@/features/first-use/SplashReveal';
 import { useReducedMotion } from '@/features/first-use/use-reduced-motion';
@@ -39,9 +41,11 @@ export default function AudioProofScreen() {
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [countdownStartedAtMs, setCountdownStartedAtMs] = useState<number | null>(null);
   const [countdownNowMs, setCountdownNowMs] = useState(0);
-  const [placeholderMessage, setPlaceholderMessage] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [recoveryAttempt, setRecoveryAttempt] = useState<UnclaimedAttempt | null>(null);
+  const [isAuthFlowVisible, setIsAuthFlowVisible] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
+  const [clientAttemptId, setClientAttemptId] = useState(() => createClientAttemptId());
   const stopInFlight = useRef(false);
   const startInFlight = useRef(false);
   const operationGeneration = useRef(0);
@@ -60,6 +64,43 @@ export default function AudioProofScreen() {
       : recordingState === 'error'
         ? 'error'
         : phase);
+
+  const currentAttempt = useMemo<UnclaimedAttempt | null>(() => {
+    if (recordingState !== 'completed' || completedAtMs === null) {
+      return null;
+    }
+    return {
+      audioRetained: false,
+      clientAttemptId,
+      completedAt: new Date(completedAtMs).toISOString(),
+      completedDurationSeconds: Math.round(elapsedMs / 1000),
+      selectedDurationSeconds,
+      topicId: topic.id,
+    };
+  }, [clientAttemptId, completedAtMs, elapsedMs, recordingState, selectedDurationSeconds, topic.id]);
+
+  const refreshRecoveryAttempt = useCallback(async () => {
+    setRecoveryAttempt(await getUnclaimedAttempt());
+  }, []);
+
+  useEffect(() => {
+    void getUnclaimedAttempt().then(setRecoveryAttempt);
+  }, [refreshRecoveryAttempt]);
+
+  useEffect(() => {
+    if (!currentAttempt) {
+      return;
+    }
+    let cancelled = false;
+    void saveUnclaimedAttempt(currentAttempt).then(() => {
+      if (!cancelled) {
+        setRecoveryAttempt(currentAttempt);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentAttempt]);
 
   const clearCountdown = useCallback(() => {
     if (countdownTimer.current) {
@@ -181,7 +222,6 @@ export default function AudioProofScreen() {
     startInFlight.current = true;
     setIsStarting(true);
     setActionError(null);
-    setPlaceholderMessage(null);
     dispatch({ type: 'REQUEST_PERMISSION' });
 
     try {
@@ -252,7 +292,6 @@ export default function AudioProofScreen() {
     setTopic((currentTopic) => selectNextTopic(currentTopic.id, Date.now() + revealKey + 1));
     setRevealKey((currentKey) => currentKey + 1);
     setActionError(null);
-    setPlaceholderMessage(null);
     setPhase('topic_reveal');
   }, [revealKey]);
 
@@ -262,6 +301,9 @@ export default function AudioProofScreen() {
       if (recordingUri) {
         await audio.deleteRecording(recordingUri);
       }
+      await clearUnclaimedAttempt();
+      setRecoveryAttempt(null);
+      setClientAttemptId(createClientAttemptId());
       dispatch({ type: 'RETRY' });
       chooseNewTopic();
     } catch (retryError) {
@@ -279,6 +321,9 @@ export default function AudioProofScreen() {
       if (recordingUri) {
         await audio.deleteRecording(recordingUri);
       }
+      await clearUnclaimedAttempt();
+      setRecoveryAttempt(null);
+      setClientAttemptId(createClientAttemptId());
       dispatch({ type: 'DELETE_RECORDING' });
       chooseNewTopic();
     } catch (deleteError) {
@@ -303,6 +348,13 @@ export default function AudioProofScreen() {
           <Text style={styles.brand}>MICDROP</Text>
           <Text style={styles.sessionMark}>R0B / LOCAL TAKE</Text>
         </View>
+
+        {recoveryAttempt && displayedPhase !== 'completion' && (
+          <View style={styles.recoveryBanner}>
+            <Text style={styles.recoveryBannerText}>You have a completed local take ready to claim.</Text>
+            <ActionButton label="Resume Quick Read setup" onPress={() => setIsAuthFlowVisible(true)} secondary />
+          </View>
+        )}
 
         {displayedPhase === 'topic_reveal' && (
           <TopicReveal
@@ -381,9 +433,8 @@ export default function AudioProofScreen() {
                 dispatch({ type: 'FAILURE', message: playError instanceof Error ? playError.message : 'Unable to play recording.' });
               })
             }
-            onQuickRead={() => setPlaceholderMessage('Quick Read is coming soon. Your recording stays on this device.')}
+            onQuickRead={() => setIsAuthFlowVisible(true)}
             onRetry={() => void retryAttempt()}
-            placeholderMessage={placeholderMessage}
             prompt={topic.prompt}
             recordingUri={recordingUri}
             reducedMotion={reducedMotion}
@@ -391,6 +442,15 @@ export default function AudioProofScreen() {
           />
         )}
       </ScrollView>
+      <SignupFlow
+        attempt={currentAttempt ?? recoveryAttempt}
+        onClose={() => {
+          setIsAuthFlowVisible(false);
+          void refreshRecoveryAttempt();
+        }}
+        onSignedOut={() => setActionError('Signed out. Your local recording remains on this device.')}
+        visible={isAuthFlowVisible}
+      />
     </SafeAreaView>
   );
 }
@@ -545,7 +605,6 @@ function CompletionView({
   onPlay,
   onQuickRead,
   onRetry,
-  placeholderMessage,
   prompt,
   recordingUri,
   reducedMotion,
@@ -557,7 +616,6 @@ function CompletionView({
   onPlay: () => void;
   onQuickRead: () => void;
   onRetry: () => void;
-  placeholderMessage: string | null;
   prompt: string;
   recordingUri: string;
   reducedMotion: boolean;
@@ -579,7 +637,6 @@ function CompletionView({
           <ActionButton compact label="Delete recording" onPress={onDelete} secondary />
         </View>
       </View>
-      {placeholderMessage && <Text accessibilityLiveRegion="polite" style={styles.inlineNoticeText}>{placeholderMessage}</Text>}
     </View>
   );
 }
@@ -712,4 +769,6 @@ const styles = StyleSheet.create({
   secondaryRow: { flexDirection: 'row', gap: 12 },
   errorText: { color: '#8c321e', fontSize: 15, lineHeight: 23, textAlign: 'center' },
   recordingMetadata: { height: 0, opacity: 0, width: 0 },
+  recoveryBanner: { backgroundColor: '#e7dccb', borderRadius: 14, gap: 10, padding: 14 },
+  recoveryBannerText: { color: '#18332d', fontSize: 14, lineHeight: 20 },
 });

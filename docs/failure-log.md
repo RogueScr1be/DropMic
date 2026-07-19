@@ -77,3 +77,23 @@
 - Cause: asynchronous audio operations outlived the UI attempt that started them.
 - Resolution: the screen now invalidates an operation generation on retry/delete/interruption and checks it before committing asynchronous results.
 - Regression coverage: existing stale-completion state-machine coverage plus Chromium interruption/retry acceptance.
+
+## 2026-07-18 — Local Supabase RLS runner unavailable
+
+- Symptom: `npx supabase test db` could not connect to Postgres.
+- Cause: Docker is not installed/running in this environment, so the local Supabase database stack could not start.
+- Resolution: added the migration and pgTAP checks but did not claim executed RLS, OTP, or deletion behavior. Run `npx supabase start && npx supabase test db` before backend acceptance.
+- Prevention: keep a Docker-backed Supabase validation step in the release checklist.
+
+## 2026-07-18 — Dependency audit reports 11 moderate Expo/toolchain findings
+
+- Symptom: `npm audit --json` reports 11 moderate findings.
+- Cause: the Expo 57 dependency tree contains `@expo/cli`, config plugins, `xcode`, and `uuid` advisories.
+- Classification: `expo` and `expo-splash-screen` are direct package entries; the other nine findings are transitive. The affected CLI/config/Xcode paths are build-time tooling and are not bundled into the shipped JS/native runtime. No non-breaking remediation was available; npm suggested an unrelated major Expo 46 change.
+- Resolution: did not run `npm audit fix` or force upgrades. Reclassify after the next supported Expo patch line is available.
+
+## 2026-07-18 — iOS Release build emitted a Metal toolchain path warning
+
+- Symptom: iPhone 16e and iPad Pro 13-inch Release builds succeeded with a warning that a deprecated simulator Metal toolchain search path was missing.
+- Cause: Xcode 26.6 simulator toolchain configuration, outside MicDrop source.
+- Resolution: no source change; both builds completed with zero errors. Revisit if a future Xcode version turns the warning into a build failure.
