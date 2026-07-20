@@ -21,6 +21,7 @@
 - Live Supabase acceptance requires disposable project credentials, CLI authentication, OTP redirect configuration, and sanitized evidence; source-level RLS review is never an acceptance result.
 - A public Auth settings response can verify basic provider flags, but migration deployment and security acceptance require authenticated CLI access after confirming the project ref.
 - Treat a successful `updateUser` response as request acceptance only; require a received OTP and exact post-verification UUID comparison before claiming anonymous conversion.
+- Final OTP acceptance requires a verified MicDrop-owned SMTP sender or the exact project-owner mailbox; never infer an owner address or use disposable mailbox delivery as release evidence.
 - For security-definer RPCs, revoke privileges explicitly from `anon` and `public`; do not assume `REVOKE ... FROM public` removes direct grants on Supabase roles.
 - Destructive account RPCs must verify the JWT subject still exists before deleting; a zero-row delete must not report success on repeated invocation.
 - Confirm the linked Supabase project name, status, and region before pushing migrations; record a region mismatch as an operator decision, not an application workaround.

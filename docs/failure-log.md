@@ -136,3 +136,10 @@
 - Evidence: authenticated project listing identifies `MicDrop` as `ACTIVE_HEALTHY` in `us-west-2`.
 - Context: the R0C setup requirement specified North Virginia, normally `us-east-1`.
 - Resolution: no project move or source change was attempted. Security acceptance continued against the confirmed disposable MicDrop project; owner decision is still required if North Virginia is mandatory.
+
+## 2026-07-20 — R0C.3 OTP delivery proof has no approved mailbox path
+
+- Symptom: the linked MicDrop project has email auth and anonymous sign-ins enabled, but this acceptance environment has neither a verified Resend SMTP configuration available for inspection nor the exact Supabase project-owner email available for a controlled test.
+- Impact: no OTP delivery, email verification, anonymous-to-email UUID equality, callback, or post-conversion recovery result can be claimed. The existing `updateUser` request-acceptance result is not delivery evidence.
+- Resolution: did not send to an inferred address or reuse a disposable mailbox. Local application checks and the live R0C.2 security harness remain green; acceptance is waiting on approved SMTP/owner-mail configuration.
+- Prevention: configure a MicDrop-owned verified sender in Supabase Auth or provide the exact project-owner mailbox before rerunning the final OTP gate. Keep all SMTP credentials in Supabase, never in the client or repository.

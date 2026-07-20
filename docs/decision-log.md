@@ -22,6 +22,27 @@ Cloud batch transcription keeps the recording loop small, avoids platform-specif
 
 Revisit this decision if offline transcription becomes a contractual requirement, privacy policy prohibits cloud processing, analysis latency exceeds the product target, or recurring transcription cost exceeds the approved per-recording budget.
 
+## 2026-07-20 — Temporary us-west-2 development region
+
+MicDrop will use the linked `us-west-2` Supabase project only for disposable development and R0C acceptance. Production region selection remains open.
+
+### Context
+
+The requested North Virginia region is normally `us-east-1`, but the authenticated project listing identifies the disposable MicDrop project as `us-west-2`. Moving or recreating the project during security acceptance would invalidate the current migration and RLS evidence.
+
+### Alternatives considered
+
+- Move or recreate the development project in North Virginia before acceptance.
+- Continue acceptance against the confirmed disposable `us-west-2` project and make the production region decision before release.
+
+### Tradeoffs
+
+Continuing preserves a stable, non-production target and avoids introducing migration drift during acceptance. The tradeoff is that latency, residency, and operational assumptions for production remain unverified against the final region.
+
+### Production revisit trigger
+
+Select and provision the production region before TestFlight or public beta, with explicit review of data residency, latency, compliance, and migration strategy. Do not place production user data in the temporary development project.
+
 ## 2026-07-18 — Runtime web recording MIME capability selection
 
 The local recording adapter probes `MediaRecorder.isTypeSupported` and selects the first supported audio MIME type, preferring WebM/Opus and then MP4/AAC. It no longer relies on `audio/webm` being accepted by every browser.
