@@ -46,6 +46,29 @@ The CLI could not authenticate, so the migration was not pushed. No OTP conversi
 
 `auth.updateUser({ email })` accepted a second disposable mailbox, but no OTP arrived within a 90-second `mail.tm` poll. This verifies request acceptance only, not email delivery or identity conversion. The first disposable provider returned HTTP 403. No application workaround was added.
 
+## R0C.2 linked-project acceptance
+
+The authenticated CLI confirmed project `bxoqbbzabubvdbxqquyt` as `MicDrop`, `ACTIVE_HEALTHY`, linked, and in `us-west-2`. This differs from the requested North Virginia region and is recorded as an operator configuration discrepancy; no move was attempted.
+
+Migration history and objects were verified remotely:
+
+- `20260718000000`, `20260720100000`, and `20260720110000` appear in local and remote migration history.
+- `profiles`, `speaking_preferences`, `attempts`, and `delete_my_account()` exist.
+- RLS is enabled on all three tables; 12 owner policies are present.
+- Anonymous table privileges are false; authenticated CRUD privileges are true.
+- Deletion RPC is security-definer with `search_path = ""`; anon/public execute is false and authenticated execute is true.
+
+The live two-user harness is [r0c2-live-acceptance.mjs](/Users/thewhitley/MicDrop/scripts/r0c2-live-acceptance.mjs). It produced:
+
+- Owner CRUD: profiles, preferences, and attempts passed; `audio_retained` remained false.
+- Attempt claims: first, retry, and both concurrent claims returned no error; exactly one row remained.
+- Cross-user client reads returned zero rows for all tables; mutations were no-ops; ownership substitution returned `42501`.
+- Direct REST reads returned `200` with zero rows; direct REST inserts returned `403` with `42501` for all tables.
+- Deletion returned no error; old-session `getUser` returned `403`; repeated deletion returned `P0001 Authenticated user not found`.
+- Post-deletion counts for profiles, preferences, attempts, and auth identity were all zero.
+
+OTP request and resend returned no client error; invalid and duplicate verification returned `403 Token has expired or is invalid`. No OTP arrived through the disposable mailbox within 90 seconds, so UUID equality after verification, redirect behavior, and expired-token delivery remain unverified.
+
 ## Cost shape
 
 At the current Supabase pricing baseline, the Free plan includes 50,000 MAU and the Pro plan starts at $25/month with 100,000 MAU included; above that, Auth MAU is $0.00325 per MAU. This metadata-only phase adds negligible database volume and no Storage/egress usage. Approximate project baseline: 1,000 users $0 Free / $25 Pro; 10,000 $0 / $25; 100,000 $0 / $25; these figures exclude email provider charges, compute beyond included credits, and any future upload/transcription costs.

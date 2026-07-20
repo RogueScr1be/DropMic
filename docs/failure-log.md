@@ -117,3 +117,22 @@
 - Flow: created a disposable `mail.tm` mailbox, created an anonymous Supabase session, and called `auth.updateUser({ email })` successfully.
 - Symptom: no OTP message arrived during a 90-second poll. A first disposable provider returned HTTP 403 before mailbox creation.
 - Resolution: no verification, UUID equality, redirect, or account-conversion claim was made. No source change was made; validate SMTP/provider delivery and Auth email templates after migration deployment.
+
+## 2026-07-20 — Account deletion RPC was executable by anon
+
+- Symptom: live metadata inspection showed `public.delete_my_account()` was `SECURITY DEFINER` with `search_path = ""`, but `has_function_privilege('anon', ..., 'execute')` returned true.
+- Cause: the original migration revoked execution from `PUBLIC` but did not explicitly revoke a direct `anon` grant.
+- Impact: an unauthenticated role could invoke the high-blast-radius deletion RPC if it had a request path to the function.
+- Resolution: stopped deletion testing; added migration `20260720100000_restrict_account_deletion.sql` to explicitly revoke `anon` and `public`, retain execute only for `authenticated`, and deploy it before continuing acceptance.
+
+## 2026-07-20 — Repeated account deletion returned success
+
+- Symptom: after the first live deletion invalidated the session, a second call to `delete_my_account()` returned success instead of an error.
+- Cause: the function used `delete from auth.users where id = auth.uid()` without checking whether the JWT subject still existed; zero deleted rows were treated as success.
+- Resolution: added `20260720110000_reject_repeated_account_deletion.sql` to require the authenticated subject to exist before deletion, then redeploy and rerun the cascade/repeated-invocation checks.
+
+## 2026-07-20 — Linked development project region differs from requested region
+
+- Evidence: authenticated project listing identifies `MicDrop` as `ACTIVE_HEALTHY` in `us-west-2`.
+- Context: the R0C setup requirement specified North Virginia, normally `us-east-1`.
+- Resolution: no project move or source change was attempted. Security acceptance continued against the confirmed disposable MicDrop project; owner decision is still required if North Virginia is mandatory.
