@@ -19,9 +19,12 @@
 - Run Supabase SQL tests only with a running local Docker stack or configured project; do not claim RLS behavior from static migration inspection.
 - `npx supabase` is available in this environment; the `supabase` binary is not on PATH. Keep `supabase/config.toml` aligned with anonymous local development.
 - Live Supabase acceptance requires disposable project credentials, CLI authentication, OTP redirect configuration, and sanitized evidence; source-level RLS review is never an acceptance result.
+- Keep Supabase Auth Site URL and allowed redirect URLs aligned with MicDrop's actual dev port (`http://localhost:8082` and `http://localhost:8082/auth/callback`); verify callback routing before claiming email conversion acceptance.
+- Keep an explicit `src/app/auth/callback.tsx` route for Supabase email links; `detectSessionInUrl` cannot handle an unmatched Expo Router path. The callback must safely handle empty, invalid, and duplicate callbacks before returning to the existing recovery/onboarding flow.
 - A public Auth settings response can verify basic provider flags, but migration deployment and security acceptance require authenticated CLI access after confirming the project ref.
 - Treat a successful `updateUser` response as request acceptance only; require a received OTP and exact post-verification UUID comparison before claiming anonymous conversion.
 - Final OTP acceptance requires a verified MicDrop-owned SMTP sender or the exact project-owner mailbox; never infer an owner address or use disposable mailbox delivery as release evidence.
+- Treat pasted access/refresh tokens as compromised; never log or persist them, and globally sign out disposable acceptance users after capturing sanitized evidence.
 - For security-definer RPCs, revoke privileges explicitly from `anon` and `public`; do not assume `REVOKE ... FROM public` removes direct grants on Supabase roles.
 - Destructive account RPCs must verify the JWT subject still exists before deleting; a zero-row delete must not report success on repeated invocation.
 - Confirm the linked Supabase project name, status, and region before pushing migrations; record a region mismatch as an operator decision, not an application workaround.

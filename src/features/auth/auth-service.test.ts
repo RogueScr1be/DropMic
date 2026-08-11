@@ -8,6 +8,7 @@ const mockSupabase: any = {
     getSession: jest.fn(),
     signInAnonymously: jest.fn(),
     updateUser: jest.fn(),
+    setSession: jest.fn(),
     verifyOtp: jest.fn(),
     signInWithOtp: jest.fn(),
     signOut: jest.fn(),
@@ -31,6 +32,7 @@ describe('auth service', () => {
     mockSupabase.auth.getSession.mockResolvedValue({ data: { session: mockSession }, error: null });
     mockSupabase.auth.signInAnonymously.mockResolvedValue({ data: { session: mockSession }, error: null });
     mockSupabase.auth.updateUser.mockResolvedValue({ data: { user: mockSession.user }, error: null });
+    mockSupabase.auth.setSession.mockResolvedValue({ data: { session: mockSession }, error: null });
     mockSupabase.auth.verifyOtp.mockResolvedValue({ data: { session: mockSession }, error: null });
     mockSupabase.auth.signInWithOtp.mockResolvedValue({ data: {}, error: null });
     mockSupabase.auth.signOut.mockResolvedValue({ error: null });
@@ -61,6 +63,26 @@ describe('auth service', () => {
     mockSupabase.auth.verifyOtp.mockResolvedValueOnce({ data: { session: null }, error: { message: 'Token has expired' } });
 
     await expect(authService.verifyEmailConversion('person@example.com', '000000')).rejects.toThrow('Token has expired');
+  });
+
+  it('establishes a callback session once and treats a duplicate as idempotent', async () => {
+    const callback = { accessToken: 'callback-token', refreshToken: 'callback-refresh-token' };
+    const callbackSession = { ...mockSession, access_token: 'callback-token' };
+    mockSupabase.auth.getSession.mockResolvedValueOnce({ data: { session: null }, error: null });
+    mockSupabase.auth.getSession.mockResolvedValueOnce({ data: { session: callbackSession }, error: null });
+    mockSupabase.auth.setSession.mockResolvedValueOnce({ data: { session: callbackSession }, error: null });
+
+    await expect(authService.completeAuthCallback(callback)).resolves.toEqual(callbackSession);
+    await expect(authService.completeAuthCallback(callback)).resolves.toEqual(callbackSession);
+
+    expect(mockSupabase.auth.setSession).toHaveBeenCalledTimes(1);
+    expect(mockSupabase.auth.setSession).toHaveBeenCalledWith({ access_token: 'callback-token', refresh_token: 'callback-refresh-token' });
+  });
+
+  it('rejects a callback without a payload when no persisted session exists', async () => {
+    mockSupabase.auth.getSession.mockResolvedValueOnce({ data: { session: null }, error: null });
+
+    await expect(authService.completeAuthCallback()).rejects.toThrow('invalid or expired');
   });
 
   it('claims the same client attempt idempotently and never stores audio', async () => {

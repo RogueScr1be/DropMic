@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState, Animated, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { SignupFlow } from '@/features/auth/SignupFlow';
@@ -23,6 +24,7 @@ type ExperiencePhase = FirstUsePhase | 'interrupted' | 'error';
 
 export default function AudioProofScreen() {
   const audio = useLocalAudioRecorder();
+  const { auth } = useLocalSearchParams<{ auth?: string }>();
   const { width } = useWindowDimensions();
   const reducedMotion = useReducedMotion();
   const recordingState = useRecordingStore((store) => store.state);
@@ -43,7 +45,7 @@ export default function AudioProofScreen() {
   const [countdownNowMs, setCountdownNowMs] = useState(0);
   const [actionError, setActionError] = useState<string | null>(null);
   const [recoveryAttempt, setRecoveryAttempt] = useState<UnclaimedAttempt | null>(null);
-  const [isAuthFlowVisible, setIsAuthFlowVisible] = useState(false);
+  const [isAuthFlowVisible, setIsAuthFlowVisible] = useState(auth === 'complete');
   const [isStarting, setIsStarting] = useState(false);
   const [clientAttemptId, setClientAttemptId] = useState(() => createClientAttemptId());
   const stopInFlight = useRef(false);

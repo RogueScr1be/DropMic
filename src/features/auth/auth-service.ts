@@ -5,6 +5,7 @@ import {
   savePendingEmail,
   type UnclaimedAttempt,
 } from './auth-recovery';
+import type { AuthCallbackPayload } from './auth-callback';
 import { isSupabaseConfigured, supabase } from './auth-client';
 
 export type OnboardingInput = {
@@ -38,6 +39,32 @@ export async function getSession() {
   const client = requireClient();
   const result = await client.auth.getSession();
   throwIfError(result.error);
+  return result.data.session;
+}
+
+export async function completeAuthCallback(payload?: AuthCallbackPayload | null) {
+  const client = requireClient();
+  const currentSession = await getSession();
+
+  if (!payload) {
+    if (!currentSession) {
+      throw new AuthServiceError('This verification link is invalid or expired.');
+    }
+    return currentSession;
+  }
+
+  if (currentSession?.access_token === payload.accessToken) {
+    return currentSession;
+  }
+
+  const result = await client.auth.setSession({
+    access_token: payload.accessToken,
+    refresh_token: payload.refreshToken,
+  });
+  throwIfError(result.error);
+  if (!result.data.session) {
+    throw new AuthServiceError('This verification link is invalid or expired.');
+  }
   return result.data.session;
 }
 
