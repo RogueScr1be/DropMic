@@ -33,3 +33,7 @@
 - For security-definer RPCs, revoke privileges explicitly from `anon` and `public`; do not assume `REVOKE ... FROM public` removes direct grants on Supabase roles.
 - Destructive account RPCs must verify the JWT subject still exists before deleting; a zero-row delete must not report success on repeated invocation.
 - Confirm the linked Supabase project name, status, and region before pushing migrations; record a region mismatch as an operator decision, not an application workaround.
+- R0C is functionally accepted at baseline commit `72baba4`; identity conversion, RLS isolation, ownership preservation, callback recovery, and session persistence are proven live. The physical iPhone audio issue is a separate pre-TestFlight gate.
+- R0D begins with discovery only. Keep its first slice narrow: explicit Get a Quick Read consent, private upload, batch transcription, brief structured feedback, raw-audio deletion, and result display. Do not combine R0D with Mic Flow, sharing, packs, or payments.
+- Before R0D implementation, lock transcript retention, failed-analysis audio retention, retry policy, and transcription/feedback providers. Do not treat recommendations as product decisions until explicitly confirmed.
+- R0D discovery must cover attempt lifecycle, Storage/RLS, function/API boundary, idempotency, deletion guarantees, quota enforcement, feedback schema, cost per 1,000 analyses, replay/retry behavior, failure-log recurrence, and exact blast radius.
