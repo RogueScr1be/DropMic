@@ -73,27 +73,43 @@ OTP request and resend returned no client error; invalid and duplicate verificat
 
 At the current Supabase pricing baseline, the Free plan includes 50,000 MAU and the Pro plan starts at $25/month with 100,000 MAU included; above that, Auth MAU is $0.00325 per MAU. This metadata-only phase adds negligible database volume and no Storage/egress usage. Approximate project baseline: 1,000 users $0 Free / $25 Pro; 10,000 $0 / $25; 100,000 $0 / $25; these figures exclude email provider charges, compute beyond included credits, and any future upload/transcription costs.
 
-## R0C.3 final OTP acceptance
+## R0C.3 final OTP acceptance — ACCEPTED
 
-Expected commit `ae4b5f995017497d8d40fab2f324711f6fca39f1` was confirmed. The worktree contained one pre-existing untracked file, `Postmark API token.pdf`; it was not opened, modified, staged, or removed.
+Commit `a35238b` is the functional-completion baseline. The final proof used one fresh
+owner-controlled address, `prentiss+micdrop-r0c-proof-20260813@soslactation.com`, without
+resetting or deleting the existing owner account. The anonymous UUID was recorded before
+requesting the OTP and compared internally with the post-verification UUID.
 
-The linked project is `MicDrop`, `ACTIVE_HEALTHY`, ref `bxoqbbzabubvdbxqquyt`, region `us-west-2`. Migration list and remote verification confirmed `20260718000000`, `20260720100000`, and `20260720110000`, the three metadata tables, `delete_my_account()`, RLS on all tables, 12 policies, and restricted deletion-function privileges.
+Sanitized identity evidence:
 
-The existing live harness passed again: owner CRUD, first/retry/concurrent claim with one remaining row, cross-user client and direct REST denial, deletion cascade, deleted-session rejection, and safe repeated deletion. No source changes were needed.
+- Anonymous UUID: `637d…2bbb`
+- Authenticated UUID: `637d…2bbb`
+- Equality: PASS
+- Attempt owner: `637d…2bbb`
+- Owner equality: PASS
+- `is_anonymous`: `false`
+- `auth.users` rows for the proof address: `1` (Supabase Auth user-list search)
+- Email verification: confirmed
 
-Basic public Auth settings returned HTTP 200 with anonymous sign-ins and email auth enabled, with auto-confirm disabled. Final OTP proof was not executable because the environment had no approved owner-mail variable and no Resend SMTP credential/configuration available for controlled delivery validation. No inferred or disposable mailbox was used for this pass.
+The controlled attempt was created before conversion with the anonymous UUID as `owner_id`.
+After `verifyOtp({ type: 'email_change' })`, the same UUID remained authenticated and owned
+the attempt. The earlier browser acceptance also confirmed that authenticated recovery did
+not reopen OTP after reload and restored the completed local take. The stale-email/session
+precedence regression is covered by unit tests.
 
-Therefore the following evidence is intentionally unclaimed: delivered OTP, verified-email UUID, exact anonymous/verified UUID equality, `is_anonymous` transition, auth-user row-count comparison, unchanged attempt ownership after conversion, Chromium `/auth/callback` conversion behavior, duplicate callback behavior, and restart recovery after conversion. The R0C.2 request-acceptance and disposable-mail observations remain historical only and are not R0C.3 acceptance evidence.
+The callback correction is complete: Supabase uses MicDrop's actual dev port `8082`, and
+`/auth/callback` is a registered terminal route. The remaining physical-iPhone audio blocker
+is unrelated to R0C identity and remains pre-TestFlight work.
 
-Required next operator action: configure a verified MicDrop-owned SMTP sender in Supabase Auth or make the exact project-owner mailbox available, then rerun the prescribed conversion and Chromium callback matrix with sanitized logs. R0D remains blocked until that evidence is collected.
-
-Validation results for this pass:
+Validation after the controlled proof:
 
 - `npm run typecheck`: passed.
 - `npm run lint`: passed.
-- `npm test -- --coverage=false`: 7 suites, 28 tests passed.
-- `npm run test:browser`: 2 tests passed.
-- `npm run web:export`: passed; production web export completed.
-- `node scripts/r0c2-live-acceptance.mjs`: passed; two anonymous test users were cleaned up.
+- `npm test -- --coverage=false`: 8 suites, 40 tests passed.
+- `npm run test:browser`: 5 tests passed.
+- `npm run web:export`: passed; `/auth/callback` exported.
+- `node scripts/r0c2-live-acceptance.mjs`: passed; owner CRUD, idempotent claims, RLS, and deletion checks passed.
 - `git diff --check`: passed.
-- `npx supabase test db`: not run successfully because Docker/Postgres is unavailable.
+- `npx supabase test db`: not run because Docker/Postgres is unavailable.
+
+R0C is accepted and R0D is unblocked. No R0D work was started in this pass.

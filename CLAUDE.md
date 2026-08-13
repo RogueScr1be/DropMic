@@ -27,6 +27,7 @@
 - Final anonymous-conversion acceptance must use a fresh owner-controlled email absent from `auth.users`; never reset or delete an existing owner account to manufacture test preconditions.
 - A public Auth settings response can verify basic provider flags, but migration deployment and security acceptance require authenticated CLI access after confirming the project ref.
 - Treat a successful `updateUser` response as request acceptance only; require a received OTP and exact post-verification UUID comparison before claiming anonymous conversion.
+- For final R0C evidence, record the anonymous UUID before requesting the OTP, compare it internally with the authenticated UUID and `attempts.owner_id`, and verify exactly one matching `auth.users` row through an authorized Auth surface; report only masked UUIDs or hash prefixes.
 - Final OTP acceptance requires a verified MicDrop-owned SMTP sender or the exact project-owner mailbox; never infer an owner address or use disposable mailbox delivery as release evidence.
 - Treat pasted access/refresh tokens as compromised; never log or persist them, and globally sign out disposable acceptance users after capturing sanitized evidence.
 - For security-definer RPCs, revoke privileges explicitly from `anon` and `public`; do not assume `REVOKE ... FROM public` removes direct grants on Supabase roles.
