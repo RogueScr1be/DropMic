@@ -2,13 +2,14 @@ import { useEffect, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { useAuthFlowStore } from './auth-flow-store';
-import { getPendingEmail } from './auth-recovery';
+import { authFlowResumeStep, clearPendingAuth, getPendingAuth } from './auth-recovery';
 import {
   AuthServiceError,
   beginEmailConversion,
   beginEmailSignIn,
   claimUnclaimedAttempt,
   deleteAccount,
+  getSession,
   saveOnboarding,
   signOut,
   verifyEmailConversion,
@@ -50,12 +51,29 @@ export function SignupFlow({
     if (!visible) {
       return;
     }
-    void getPendingEmail().then((pendingEmail) => {
-      if (pendingEmail) {
-        setEmail(pendingEmail);
-        setStep('otp');
+    let cancelled = false;
+    void (async () => {
+      const session = await getSession().catch(() => null);
+      const pendingAuth = await getPendingAuth();
+      if (cancelled) {
+        return;
       }
-    });
+      const nextStep = authFlowResumeStep(session, pendingAuth);
+      if (nextStep === 'onboarding') {
+        await clearPendingAuth();
+        if (!cancelled) {
+          setStep(nextStep);
+        }
+        return;
+      }
+      if (nextStep === 'otp' || nextStep === 'sign_in_otp') {
+        setEmail(pendingAuth?.email ?? '');
+      }
+      setStep(nextStep);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [setEmail, setStep, visible]);
 
   const close = () => {

@@ -1,8 +1,8 @@
 import {
-  clearPendingEmail,
+  clearPendingAuth,
   clearUnclaimedAttempt,
   getUnclaimedAttempt,
-  savePendingEmail,
+  savePendingAuth,
   type UnclaimedAttempt,
 } from './auth-recovery';
 import type { AuthCallbackPayload } from './auth-callback';
@@ -50,10 +50,12 @@ export async function completeAuthCallback(payload?: AuthCallbackPayload | null)
     if (!currentSession) {
       throw new AuthServiceError('This verification link is invalid or expired.');
     }
+    await clearPendingAuth();
     return currentSession;
   }
 
   if (currentSession?.access_token === payload.accessToken) {
+    await clearPendingAuth();
     return currentSession;
   }
 
@@ -65,6 +67,7 @@ export async function completeAuthCallback(payload?: AuthCallbackPayload | null)
   if (!result.data.session) {
     throw new AuthServiceError('This verification link is invalid or expired.');
   }
+  await clearPendingAuth();
   return result.data.session;
 }
 
@@ -90,10 +93,15 @@ export async function beginEmailConversion(email: string) {
     throw new AuthServiceError('Enter a valid email address.');
   }
   const client = requireClient();
-  await ensureAnonymousSession();
-  await savePendingEmail(normalizedEmail);
+  const anonymousSession = await ensureAnonymousSession();
   const result = await client.auth.updateUser({ email: normalizedEmail });
   throwIfError(result.error);
+  await savePendingAuth({
+    intent: 'anonymous-conversion',
+    email: normalizedEmail,
+    anonymousUserId: anonymousSession.user.id,
+    createdAt: Date.now(),
+  });
 }
 
 export async function verifyEmailConversion(email: string, token: string) {
@@ -103,7 +111,7 @@ export async function verifyEmailConversion(email: string, token: string) {
   if (!result.data.session) {
     throw new AuthServiceError('The code was accepted but no session was returned.');
   }
-  await clearPendingEmail();
+  await clearPendingAuth();
   return result.data.session;
 }
 
@@ -113,12 +121,16 @@ export async function beginEmailSignIn(email: string) {
     throw new AuthServiceError('Enter a valid email address.');
   }
   const client = requireClient();
-  await savePendingEmail(normalizedEmail);
   const result = await client.auth.signInWithOtp({
     email: normalizedEmail,
     options: { shouldCreateUser: false },
   });
   throwIfError(result.error);
+  await savePendingAuth({
+    intent: 'existing-sign-in',
+    email: normalizedEmail,
+    createdAt: Date.now(),
+  });
 }
 
 export async function verifyEmailSignIn(email: string, token: string) {
@@ -128,7 +140,7 @@ export async function verifyEmailSignIn(email: string, token: string) {
   if (!result.data.session) {
     throw new AuthServiceError('The code was accepted but no session was returned.');
   }
-  await clearPendingEmail();
+  await clearPendingAuth();
   return result.data.session;
 }
 
@@ -191,6 +203,7 @@ export async function signOut() {
   const client = requireClient();
   const result = await client.auth.signOut({ scope: 'local' });
   throwIfError(result.error);
+  await clearPendingAuth();
 }
 
 export async function deleteAccount() {
@@ -198,6 +211,6 @@ export async function deleteAccount() {
   const result = await client.rpc('delete_my_account');
   throwIfError(result.error);
   await clearUnclaimedAttempt();
-  await clearPendingEmail();
+  await clearPendingAuth();
   await client.auth.signOut({ scope: 'local' });
 }

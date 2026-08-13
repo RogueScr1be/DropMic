@@ -2,9 +2,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { beforeEach, describe, expect, it } from '@jest/globals';
 
 import {
+  authFlowResumeStep,
   clearUnclaimedAttempt,
   createClientAttemptId,
+  getPendingAuth,
   getUnclaimedAttempt,
+  savePendingAuth,
   saveUnclaimedAttempt,
 } from './auth-recovery';
 
@@ -42,5 +45,37 @@ describe('local attempt recovery', () => {
     await clearUnclaimedAttempt();
 
     await expect(getUnclaimedAttempt()).resolves.toBeNull();
+  });
+
+  it('stores an explicit pending auth intent for an unfinished OTP request', async () => {
+    const pendingAuth = {
+      intent: 'anonymous-conversion' as const,
+      email: ' Person@Example.com ',
+      anonymousUserId: 'anonymous-user-1',
+      createdAt: 1000,
+    };
+
+    await savePendingAuth(pendingAuth);
+
+    await expect(getPendingAuth()).resolves.toEqual({ ...pendingAuth, email: 'person@example.com' });
+  });
+
+  it('ignores and removes the legacy cached email state', async () => {
+    await AsyncStorage.setItem('@micdrop/r0c/pending-email', 'stale@example.com');
+
+    await expect(getPendingAuth()).resolves.toBeNull();
+    await expect(AsyncStorage.getItem('@micdrop/r0c/pending-email')).resolves.toBeNull();
+  });
+
+  it('lets authenticated session truth override stale pending auth', () => {
+    const pendingAuth = {
+      intent: 'anonymous-conversion' as const,
+      email: 'stale@example.com',
+      createdAt: 1000,
+    };
+
+    expect(authFlowResumeStep({ user: { is_anonymous: false } }, pendingAuth)).toBe('onboarding');
+    expect(authFlowResumeStep({ user: { is_anonymous: true } }, pendingAuth)).toBe('otp');
+    expect(authFlowResumeStep(null, { ...pendingAuth, intent: 'existing-sign-in' })).toBe('sign_in_otp');
   });
 });
