@@ -38,7 +38,11 @@ describe('auth service', () => {
     mockSupabase.auth.signOut.mockResolvedValue({ error: null });
     mockSupabase.rpc.mockResolvedValue({ data: null, error: null });
     mockSupabase.from.mockImplementation(() => ({
-      upsert: jest.fn<() => Promise<any>>().mockResolvedValue({ error: null }),
+      upsert: jest.fn<() => { select: () => { single: () => Promise<any> } }>().mockReturnValue({
+        select: jest.fn<() => { single: () => Promise<any> }>().mockReturnValue({
+          single: jest.fn<() => Promise<any>>().mockResolvedValue({ data: { id: 'attempt-1' }, error: null }),
+        }),
+      }),
       update: jest.fn<() => { eq: () => Promise<any> }>().mockReturnValue({ eq: jest.fn<() => Promise<any>>().mockResolvedValue({ error: null }) }),
     }));
   });
@@ -130,8 +134,8 @@ describe('auth service', () => {
     };
     await saveUnclaimedAttempt(attempt);
 
-    await expect(authService.claimUnclaimedAttempt(attempt)).resolves.toBe(true);
-    await expect(authService.claimUnclaimedAttempt(attempt)).resolves.toBe(true);
+    await expect(authService.claimUnclaimedAttempt(attempt)).resolves.toBe('attempt-1');
+    await expect(authService.claimUnclaimedAttempt(attempt)).resolves.toBe('attempt-1');
 
     const attemptsTables: any[] = mockSupabase.from.mock.results.map((result: any) => result.value);
     const upserts = attemptsTables.flatMap((table) => table.upsert.mock.calls);

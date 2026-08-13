@@ -1,6 +1,6 @@
 # MicDrop R0D — Quick Read discovery
 
-Status: discovery complete; implementation not started.
+Status: R0D-A implementation in progress; live acceptance pending Supabase CLI authentication.
 
 Baseline: R0C is closed at `72baba4`. R0D is limited to one vertical slice:
 
@@ -137,5 +137,17 @@ Recording state-machine/audio code should remain unchanged unless a demonstrated
 
 ## Discovery conclusion
 
-The correct R0D shape is a consent-gated, authenticated, idempotent Edge Function pipeline with private Storage, scheduled TTL cleanup, server-side quota accounting, and a durable `attempt_metrics` layer separated from transcript/audio content. No implementation or migration should begin until the open questions are resolved, especially the account boundary and cleanup authority.
+The correct R0D shape is a consent-gated, authenticated, idempotent Edge Function pipeline with private Storage, scheduled TTL cleanup, server-side quota accounting, and a durable `attempt_metrics` layer separated from transcript/audio content. R0D-B must not begin until the remaining cleanup authority, exact feedback model, quota timezone, narrative-retention, and upload-limit decisions are resolved.
 
+## R0D-A implementation status
+
+The data foundation is now implemented locally in:
+
+- `supabase/migrations/20260813000000_r0d_data_storage_foundation.sql`
+- `supabase/tests/r0d_a_data_storage_foundation.sql`
+- `supabase/rollback/20260813000000_r0d_data_storage_foundation.sql`
+- `scripts/r0d-a-live-acceptance.mjs`
+
+The authenticated claim path now returns the server-created `attempts.id`, which is the required handoff for the later upload boundary. No provider adapter, Edge Function, upload UI, transcript persistence, or Quick Read rendering was added.
+
+The live exit gate is pending because this environment has no Supabase CLI profile (`/Users/thewhitley/.supabase/profile`). Local typecheck, lint, Jest, web export, Node syntax, and diff checks pass; live migration/RLS/Storage/quota execution has not been claimed.

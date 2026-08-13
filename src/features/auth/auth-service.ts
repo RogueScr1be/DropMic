@@ -182,21 +182,28 @@ export async function claimUnclaimedAttempt(attempt?: UnclaimedAttempt | null) {
   if (!localAttempt) {
     return false;
   }
-  const result = await client.from('attempts').upsert(
-    {
-      owner_id: session.user.id,
-      client_attempt_id: localAttempt.clientAttemptId,
-      topic_id: localAttempt.topicId,
-      selected_duration_seconds: localAttempt.selectedDurationSeconds,
-      completed_duration_seconds: localAttempt.completedDurationSeconds,
-      completed_at: localAttempt.completedAt,
-      audio_retained: false,
-    },
-    { onConflict: 'client_attempt_id' },
-  );
+  const result = await client
+    .from('attempts')
+    .upsert(
+      {
+        owner_id: session.user.id,
+        client_attempt_id: localAttempt.clientAttemptId,
+        topic_id: localAttempt.topicId,
+        selected_duration_seconds: localAttempt.selectedDurationSeconds,
+        completed_duration_seconds: localAttempt.completedDurationSeconds,
+        completed_at: localAttempt.completedAt,
+        audio_retained: false,
+      },
+      { onConflict: 'client_attempt_id' },
+    )
+    .select('id')
+    .single();
   throwIfError(result.error);
+  if (!result.data?.id) {
+    throw new AuthServiceError('The attempt was saved without a server identity. Try again.');
+  }
   await clearUnclaimedAttempt();
-  return true;
+  return result.data.id;
 }
 
 export async function signOut() {
