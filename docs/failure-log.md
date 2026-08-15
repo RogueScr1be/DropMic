@@ -143,3 +143,10 @@
 - Impact: no OTP delivery, email verification, anonymous-to-email UUID equality, callback, or post-conversion recovery result can be claimed. The existing `updateUser` request-acceptance result is not delivery evidence.
 - Resolution: did not send to an inferred address or reuse a disposable mailbox. Local application checks and the live R0C.2 security harness remain green; acceptance is waiting on approved SMTP/owner-mail configuration.
 - Prevention: configure a MicDrop-owned verified sender in Supabase Auth or provide the exact project-owner mailbox before rerunning the final OTP gate. Keep all SMTP credentials in Supabase, never in the client or repository.
+
+## 2026-08-14 — R0D-A Storage policy regex rejected valid owner uploads
+
+- Symptom: the owner could create an `analysis_runs` row, but uploading the server-generated `.wav` object failed with a Storage RLS violation.
+- Cause: the foundation migration over-escaped the filename separator as `source\\.`; the valid `source.wav` path did not match the policy regex.
+- Resolution: deployed the narrow follow-up migration `20260814000000_r0d_a_storage_policy_regex_fix.sql` with `source\\.` and reran the live owner/cross-user acceptance.
+- Guardrail: every Storage RLS regex/pattern change requires a positive owner-upload test plus negative cross-user upload, read, delete, and analysis-start tests before acceptance. A successful Storage delete response with zero deleted objects is a protected no-op, not proof of deletion.

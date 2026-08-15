@@ -5,9 +5,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { SignupFlow } from '@/features/auth/SignupFlow';
 import { clearUnclaimedAttempt, createClientAttemptId, getUnclaimedAttempt, saveUnclaimedAttempt, type UnclaimedAttempt } from '@/features/auth/auth-recovery';
+import { claimUnclaimedAttempt, getSession } from '@/features/auth/auth-service';
 import { PREPARATION_COUNTDOWN_MS, formatCountdownNumber, formatSpeakingTime, phaseForRecordingState, type FirstUsePhase } from '@/features/first-use/first-use-flow';
 import { SplashReveal } from '@/features/first-use/SplashReveal';
 import { useReducedMotion } from '@/features/first-use/use-reduced-motion';
+import { QuickReadFlow } from '@/features/quick-read/QuickReadFlow';
 import { useLocalAudioRecorder } from '@/features/recording/use-local-audio-recorder';
 import {
   deriveElapsedMs,
@@ -17,6 +19,7 @@ import {
   type RecordingDuration,
 } from '@/features/recording/recording-machine';
 import { useRecordingStore } from '@/features/recording/recording-store';
+import { detectWebRecordingMimeType } from '@/features/recording/web-recording-format';
 import { selectNextTopic, type SpeakingTopic } from '@/features/topics/topic-catalog';
 import { SolariBoard } from '@/features/solari/SolariBoard';
 
@@ -45,7 +48,9 @@ export default function AudioProofScreen() {
   const [countdownNowMs, setCountdownNowMs] = useState(0);
   const [actionError, setActionError] = useState<string | null>(null);
   const [recoveryAttempt, setRecoveryAttempt] = useState<UnclaimedAttempt | null>(null);
+  const [serverAttemptId, setServerAttemptId] = useState<string | null>(null);
   const [isAuthFlowVisible, setIsAuthFlowVisible] = useState(auth === 'complete');
+  const [isQuickReadVisible, setIsQuickReadVisible] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
   const [clientAttemptId, setClientAttemptId] = useState(() => createClientAttemptId());
   const stopInFlight = useRef(false);
@@ -337,6 +342,27 @@ export default function AudioProofScreen() {
     }
   }, [audio, chooseNewTopic, dispatch, recordingUri]);
 
+  const openQuickRead = useCallback(async () => {
+    try {
+      const session = await getSession();
+      if (!session?.user || session.user.is_anonymous) {
+        setIsAuthFlowVisible(true);
+        return;
+      }
+      const attemptId = serverAttemptId ?? (await claimUnclaimedAttempt(currentAttempt));
+      if (typeof attemptId !== 'string') {
+        setActionError('Finish account setup before starting a Quick Read.');
+        setIsAuthFlowVisible(true);
+        return;
+      }
+      setServerAttemptId(attemptId);
+      setIsQuickReadVisible(true);
+    } catch (openError) {
+      setActionError(openError instanceof Error ? openError.message : 'Sign in before starting a Quick Read.');
+      setIsAuthFlowVisible(true);
+    }
+  }, [currentAttempt, serverAttemptId]);
+
   if (displayedPhase === 'splash') {
     return <SplashReveal onComplete={() => setPhase('topic_reveal')} reducedMotion={reducedMotion} />;
   }
@@ -435,7 +461,7 @@ export default function AudioProofScreen() {
                 dispatch({ type: 'FAILURE', message: playError instanceof Error ? playError.message : 'Unable to play recording.' });
               })
             }
-            onQuickRead={() => setIsAuthFlowVisible(true)}
+            onQuickRead={() => void openQuickRead()}
             onRetry={() => void retryAttempt()}
             prompt={topic.prompt}
             recordingUri={recordingUri}
@@ -446,12 +472,20 @@ export default function AudioProofScreen() {
       </ScrollView>
       <SignupFlow
         attempt={currentAttempt ?? recoveryAttempt}
+        onAttemptClaimed={setServerAttemptId}
         onClose={() => {
           setIsAuthFlowVisible(false);
           void refreshRecoveryAttempt();
         }}
         onSignedOut={() => setActionError('Signed out. Your local recording remains on this device.')}
         visible={isAuthFlowVisible}
+      />
+      <QuickReadFlow
+        attemptId={serverAttemptId}
+        audioExtension={quickReadAudioExtension(recordingUri)}
+        audioUri={recordingUri}
+        onClose={() => setIsQuickReadVisible(false)}
+        visible={isQuickReadVisible}
       />
     </SafeAreaView>
   );
@@ -718,6 +752,14 @@ function ActionButton({
       <Text style={[styles.actionButtonText, secondary && styles.actionButtonTextSecondary]}>{label}</Text>
     </Pressable>
   );
+}
+
+function quickReadAudioExtension(uri: string | null): 'm4a' | 'mp4' | 'webm' | 'wav' | 'ogg' {
+  const extension = uri?.split('?')[0].split('.').pop()?.toLowerCase();
+  if (extension === 'm4a' || extension === 'mp4' || extension === 'webm' || extension === 'wav' || extension === 'ogg') {
+    return extension;
+  }
+  return detectWebRecordingMimeType()?.includes('mp4') ? 'mp4' : 'webm';
 }
 
 const styles = StyleSheet.create({

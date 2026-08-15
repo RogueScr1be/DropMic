@@ -137,7 +137,7 @@ Recording state-machine/audio code should remain unchanged unless a demonstrated
 
 ## Discovery conclusion
 
-The correct R0D shape is a consent-gated, authenticated, idempotent Edge Function pipeline with private Storage, scheduled TTL cleanup, server-side quota accounting, and a durable `attempt_metrics` layer separated from transcript/audio content. R0D-B must not begin until the remaining cleanup authority, exact feedback model, quota timezone, narrative-retention, and upload-limit decisions are resolved.
+The correct R0D shape is a consent-gated, authenticated, idempotent Edge Function pipeline with private Storage, scheduled TTL cleanup, server-side quota accounting, and a durable `attempt_metrics` layer separated from transcript/audio content. The remaining R0D decisions were subsequently locked before the isolated R0D-B implementation began.
 
 ## R0D-A implementation status
 
@@ -167,4 +167,15 @@ The live acceptance session proved the authenticated owner boundary after deploy
 
 The first live upload exposed and the follow-up migration corrected an over-escaped `source\\.` filename matcher in the foundation Storage policies. The acceptance harness now treats a successful Storage delete response with zero deleted objects as blocked, matching Supabase Storage behavior.
 
-R0D-A live ownership/idempotency gate: **PASS**. R0D-B remains blocked pending separate authorization and the remaining cleanup/TTL and quota-concurrency proof work described in the implementation plan. The pgTAP command could not run on this machine because the installed Supabase CLI requires Docker even with `--linked`; that is a tooling limitation, not a substitute for the live RLS result.
+R0D-A live ownership/idempotency gate: **PASS**. R0D-B was kept separate from this gate; its implementation and remaining provider-backed acceptance state are recorded below. The pgTAP command could not run on this machine because the installed Supabase CLI requires Docker even with `--linked`; that is a tooling limitation, not a substitute for the live RLS result.
+
+## R0D-B implementation status
+
+The isolated vertical slice is implemented and deployed without provider credentials:
+
+- `supabase/migrations/20260814010000_r0d_b_quick_read_results.sql` stores service-role-only transcripts with the 30-day deadline and owner-readable structured results.
+- `supabase/functions/quick-read/index.ts` authenticates the permanent owner, atomically claims the run, downloads private audio, transcribes with `gpt-4o-mini-transcribe`, validates nano-class structured feedback, writes metrics after validation, deletes audio before completion, and applies two transient retries.
+- `src/features/quick-read/quick-read-service.ts` and `QuickReadFlow.tsx` implement consent, upload, processing, and the seven-field result presentation.
+- `scripts/r0d-b-live-acceptance.mjs` is ready for the fresh disposable test user and a real audio fixture.
+
+The `quick-read` Edge Function is active with JWT verification enabled. The live AI acceptance gate remains open because `OPENAI_API_KEY` is not present in the workspace or Supabase Function secrets. No AI request or provider spend has been made. Set the key only in Supabase Edge Function secrets, then run the fresh-user acceptance harness before marking R0D-B accepted.

@@ -20,11 +20,13 @@ import type { UnclaimedAttempt } from './auth-recovery';
 
 export function SignupFlow({
   attempt,
+  onAttemptClaimed,
   onClose,
   onSignedOut,
   visible,
 }: {
   attempt: UnclaimedAttempt | null;
+  onAttemptClaimed?: (attemptId: string) => void;
   onClose: () => void;
   onSignedOut: () => void;
   visible: boolean;
@@ -121,7 +123,10 @@ export function SignupFlow({
   const finishOnboarding = () =>
     void run(async () => {
       await saveOnboarding({ ageGateConfirmed, goals, blockers, freeTextGoal });
-      await claimUnclaimedAttempt(attempt);
+      const claimedAttemptId = await claimUnclaimedAttempt(attempt);
+      if (typeof claimedAttemptId === 'string') {
+        onAttemptClaimed?.(claimedAttemptId);
+      }
       setStep('complete');
     });
 
