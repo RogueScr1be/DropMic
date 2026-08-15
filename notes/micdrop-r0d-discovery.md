@@ -150,4 +150,21 @@ The data foundation is now implemented locally in:
 
 The authenticated claim path now returns the server-created `attempts.id`, which is the required handoff for the later upload boundary. No provider adapter, Edge Function, upload UI, transcript persistence, or Quick Read rendering was added.
 
-The live exit gate is pending because this environment has no Supabase CLI profile (`/Users/thewhitley/.supabase/profile`). Local typecheck, lint, Jest, web export, Node syntax, and diff checks pass; live migration/RLS/Storage/quota execution has not been claimed.
+The linked migration is deployed to the project. The CLI access token is present, although this CLI build still reports the missing legacy profile path before using the token; migration deployment completed successfully. Local typecheck, lint, Jest, browser, web export, Node syntax, and diff checks pass.
+
+## R0D-A live exit gate
+
+The live acceptance session proved the authenticated owner boundary after deployment:
+
+- Owner can create a completed `attempts` row and request one `analysis_runs` row.
+- Repeating the same idempotency key returns the same run and does not create a second run.
+- The request creates readable `attempt_metrics` with schema version `r0d.1`.
+- Owner upload succeeds only at the server-generated `quick-read/{user_id}/{attempt_id}/source.wav` path.
+- Owner overwrite is blocked because no Storage update policy exists.
+- A second anonymous user cannot upload, read, or start analysis for the owner attempt.
+- A second user's Storage delete is a zero-object no-op; it does not remove the owner's object.
+- Owner cleanup removes the object through Storage API and deletes the attempt.
+
+The first live upload exposed and the follow-up migration corrected an over-escaped `source\\.` filename matcher in the foundation Storage policies. The acceptance harness now treats a successful Storage delete response with zero deleted objects as blocked, matching Supabase Storage behavior.
+
+R0D-A live ownership/idempotency gate: **PASS**. R0D-B remains blocked pending separate authorization and the remaining cleanup/TTL and quota-concurrency proof work described in the implementation plan. The pgTAP command could not run on this machine because the installed Supabase CLI requires Docker even with `--linked`; that is a tooling limitation, not a substitute for the live RLS result.

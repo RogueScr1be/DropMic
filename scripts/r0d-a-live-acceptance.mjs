@@ -122,7 +122,10 @@ await rest(`/rest/v1/attempts?id=eq.${encodeURIComponent(serverAttemptId)}`, { m
 
 assert(otherUpload.status >= 400, 'cross-user upload unexpectedly succeeded');
 assert(otherRead.status >= 400, 'cross-user read unexpectedly succeeded');
-assert(otherDelete.status >= 400, 'cross-user delete unexpectedly succeeded');
+const crossUserDeleteBlocked =
+  otherDelete.status >= 400 ||
+  (Array.isArray(otherDelete.body) && otherDelete.body.length === 0);
+assert(crossUserDeleteBlocked, 'cross-user delete unexpectedly succeeded');
 assert(otherStart.status >= 400, 'cross-user analysis start unexpectedly succeeded');
 assert(ownerDelete.status < 300, `owner cleanup failed: ${safeError(ownerDelete)}`);
 
@@ -132,6 +135,7 @@ console.log(JSON.stringify({
     uploadStatus: otherUpload.status,
     readStatus: otherRead.status,
     deleteStatus: otherDelete.status,
+    deleteBlocked: crossUserDeleteBlocked,
     analysisStartStatus: otherStart.status,
   },
   result: 'R0D-A live ownership and idempotency checks passed',
