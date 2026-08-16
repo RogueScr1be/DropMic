@@ -1,6 +1,6 @@
 # MicDrop R0D — Quick Read discovery
 
-Status: R0D-A implementation in progress; live acceptance pending Supabase CLI authentication.
+Status: R0D-A and R0D-B accepted; R0D-C lifecycle hardening is next.
 
 Baseline: R0C is closed at `72baba4`. R0D is limited to one vertical slice:
 
@@ -171,11 +171,32 @@ R0D-A live ownership/idempotency gate: **PASS**. R0D-B was kept separate from th
 
 ## R0D-B implementation status
 
-The isolated vertical slice is implemented and deployed without provider credentials:
+The isolated vertical slice is implemented and deployed:
 
 - `supabase/migrations/20260814010000_r0d_b_quick_read_results.sql` stores service-role-only transcripts with the 30-day deadline and owner-readable structured results.
 - `supabase/functions/quick-read/index.ts` authenticates the permanent owner, atomically claims the run, downloads private audio, transcribes with `gpt-4o-mini-transcribe`, validates nano-class structured feedback, writes metrics after validation, deletes audio before completion, and applies two transient retries.
 - `src/features/quick-read/quick-read-service.ts` and `QuickReadFlow.tsx` implement consent, upload, processing, and the seven-field result presentation.
 - `scripts/r0d-b-live-acceptance.mjs` is ready for the fresh disposable test user and a real audio fixture.
 
-The `quick-read` Edge Function is active with JWT verification enabled. The live AI acceptance gate remains open because `OPENAI_API_KEY` is not present in the workspace or Supabase Function secrets. No AI request or provider spend has been made. Set the key only in Supabase Edge Function secrets, then run the fresh-user acceptance harness before marking R0D-B accepted.
+The `quick-read` Edge Function is active with JWT verification enabled and the provider key remains server-side in Supabase Function secrets.
+
+## R0D-B acceptance
+
+R0D-B is accepted at implementation baseline `27cb499`.
+
+The live disposable-user vertical slice proved:
+
+- private owner upload and transcription;
+- strict seven-field structured feedback;
+- durable `attempt_metrics` with no transcript leakage;
+- successful audio deletion;
+- idempotent duplicate invocation without another provider execution;
+- cross-user denial;
+- server-side three-Quick-Reads-per-day quota;
+- 24-hour failed-audio and 30-day transcript deadlines.
+
+The test quota was reset only for the disposable development user before the final run. The harness removed its disposable attempts afterward; no acceptance evidence, ownership, schema, RLS policy, or production quota logic was changed. Deliberate provider fault injection is deferred to R0D-C lifecycle hardening.
+
+## R0D-C scope
+
+R0D-C is limited to retry orchestration, cleanup replay/idempotency, terminal-state protection, account-deletion completeness, and protected test-only provider fault injection. Production must never accept client-controlled fault modes, and no new product functionality belongs in this phase.
