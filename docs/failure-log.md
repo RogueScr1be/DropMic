@@ -150,3 +150,10 @@
 - Cause: the foundation migration over-escaped the filename separator as `source\\.`; the valid `source.wav` path did not match the policy regex.
 - Resolution: deployed the narrow follow-up migration `20260814000000_r0d_a_storage_policy_regex_fix.sql` with `source\\.` and reran the live owner/cross-user acceptance.
 - Guardrail: every Storage RLS regex/pattern change requires a positive owner-upload test plus negative cross-user upload, read, delete, and analysis-start tests before acceptance. A successful Storage delete response with zero deleted objects is a protected no-op, not proof of deletion.
+
+## 2026-08-16 — R0D-B live harness stripped the server-owned Storage folder
+
+- Symptom: the owner-created `analysis_runs` row was valid, but the R0D-B harness received a Storage RLS denial before any provider call.
+- Cause: the harness removed the `quick-read/` folder from the server-owned object path before calling Storage. The app correctly uploads the complete `quick-read/{user_id}/{attempt_id}/source.<ext>` path, and the deployed policy intentionally requires that folder.
+- Resolution: corrected both live harnesses to pass the complete server-owned path; no RLS policy or application upload contract was changed.
+- Prevention: acceptance scripts must use `analysis_runs.audio_object_path` verbatim and must assert that owner upload and cross-user denial are both exercised against that exact path.

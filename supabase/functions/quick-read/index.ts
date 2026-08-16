@@ -321,7 +321,7 @@ async function processRun(
       if (!transcript) {
         await updateRun(admin, run.id, {
           status: 'transcribing',
-          transcription_model: transcriptionAdapter.model,
+          transcription_model_version: transcriptionAdapter.model,
         });
         const { data: audio, error: audioError } = await admin.storage
           .from(AUDIO_BUCKET)
@@ -344,7 +344,7 @@ async function processRun(
 
       await updateRun(admin, run.id, {
         status: 'analyzing',
-        feedback_model: feedbackAdapter.model,
+        feedback_model_version: feedbackAdapter.model,
       });
       const result = await feedbackAdapter.analyze(transcript);
       const wordCount = countWords(transcript);

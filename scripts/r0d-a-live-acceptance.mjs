@@ -89,22 +89,22 @@ const otherToken = anonymous.data.session.access_token;
 const path = firstRun.body.audio_object_path;
 const fixture = new Uint8Array([82, 73, 70, 70, 0, 0, 0, 0, 87, 65, 86, 69]);
 
-const ownerUpload = await rest(`/storage/v1/object/quick-read-audio/${path.replace(/^quick-read\//, '')}`, {
+const ownerUpload = await rest(`/storage/v1/object/quick-read-audio/${path}`, {
   method: 'POST',
   headers: { 'content-type': 'audio/wav', 'x-upsert': 'false' },
   body: fixture,
 });
 assert(ownerUpload.status === 200, `owner upload failed: ${safeError(ownerUpload)}`);
 
-const otherUpload = await rest(`/storage/v1/object/quick-read-audio/${path.replace(/^quick-read\//, '')}`, {
+const otherUpload = await rest(`/storage/v1/object/quick-read-audio/${path}`, {
   method: 'POST',
   headers: { 'content-type': 'audio/wav', 'x-upsert': 'false' },
   body: fixture,
 }, otherToken);
-const otherRead = await rest(`/storage/v1/object/quick-read-audio/${path.replace(/^quick-read\//, '')}`, {
+const otherRead = await rest(`/storage/v1/object/quick-read-audio/${path}`, {
   method: 'GET',
 }, otherToken);
-const otherDelete = await rest(`/storage/v1/object/quick-read-audio/${path.replace(/^quick-read\//, '')}`, {
+const otherDelete = await rest(`/storage/v1/object/quick-read-audio/${path}`, {
   method: 'DELETE',
   headers: { 'content-type': 'application/json' },
 }, otherToken);
@@ -114,7 +114,7 @@ const otherStart = await rest('/rest/v1/rpc/request_quick_read', {
   body: JSON.stringify({ p_attempt_id: serverAttemptId, p_idempotency_key: `r0d-a-other-${Date.now()}`, p_audio_extension: 'wav' }),
 }, otherToken);
 
-const ownerDelete = await rest(`/storage/v1/object/quick-read-audio/${path.replace(/^quick-read\//, '')}`, {
+const ownerDelete = await rest(`/storage/v1/object/quick-read-audio/${path}`, {
   method: 'DELETE',
   headers: { 'content-type': 'application/json' },
 });

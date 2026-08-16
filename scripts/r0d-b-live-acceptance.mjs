@@ -115,7 +115,7 @@ try {
   const request = await requestRun(attemptId, 'r0d-b-live-' + Date.now());
   assert(request.status === 200, 'analysis request failed: ' + safeError(request));
   const run = request.body;
-  const upload = await rest('/storage/v1/object/quick-read-audio/' + run.audio_object_path.replace(/^quick-read\//, ''), {
+  const upload = await rest('/storage/v1/object/quick-read-audio/' + run.audio_object_path, {
     method: 'POST',
     headers: { 'content-type': 'audio/' + audioExtension, 'x-upsert': 'false' },
     body: audioBytes,
@@ -142,7 +142,7 @@ try {
   assert(metrics.status === 200 && metrics.body?.[0]?.analysis_completed === true, 'metrics were not completed');
   assert(!JSON.stringify(metrics.body[0].derived_metrics ?? {}).includes('transcript'), 'transcript leaked into derived metrics');
 
-  const audioAfter = await rest('/storage/v1/object/quick-read-audio/' + run.audio_object_path.replace(/^quick-read\//, ''), { method: 'GET' });
+  const audioAfter = await rest('/storage/v1/object/quick-read-audio/' + run.audio_object_path, { method: 'GET' });
   assert(audioAfter.status >= 400, 'audio object still exists after successful analysis');
 
   const runAfterFirst = await rest('/rest/v1/analysis_runs?id=eq.' + encodeURIComponent(run.id));
