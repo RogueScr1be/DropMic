@@ -45,7 +45,9 @@ function friendlyError(code: string | undefined) {
     case 'audio_unavailable':
     case 'local_audio_unavailable':
       return 'The recording could not be opened. It is still available locally.';
-    case 'invalid_model_response':
+    case 'invalid_model_response_shape':
+    case 'invalid_model_json':
+    case 'invalid_model_schema':
       return 'Quick Read could not validate the feedback. Your recording was kept for retry.';
     case 'provider_timeout':
     case 'provider_transport':

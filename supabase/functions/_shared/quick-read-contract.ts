@@ -60,3 +60,82 @@ export function parseQuickReadResult(value: unknown): QuickReadResult | null {
     nextDrill: (record.nextDrill as string).trim(),
   };
 }
+
+export type FeedbackResponseParseResult =
+  | { ok: true; result: QuickReadResult }
+  | {
+      ok: false;
+      code: 'invalid_model_response_shape';
+      diagnostics: {
+        finishReason: string | null;
+        messagePresent: boolean;
+        contentType: string;
+        contentLength: number | null;
+        refusalPresent: boolean;
+      };
+    }
+  | {
+      ok: false;
+      code: 'invalid_model_json';
+      diagnostics: { contentLength: number };
+    }
+  | {
+      ok: false;
+      code: 'invalid_model_schema';
+      diagnostics: { keys: string[] };
+    };
+
+type ChatCompletionPayload = {
+  choices?: Array<{
+    finish_reason?: unknown;
+    message?: { content?: unknown; refusal?: unknown };
+  }>;
+};
+
+function asFinishReason(value: unknown) {
+  return typeof value === 'string' ? value : null;
+}
+
+export function parseFeedbackResponse(payload: unknown): FeedbackResponseParseResult {
+  const response = payload as ChatCompletionPayload | null;
+  const choice = response?.choices?.[0];
+  const message = choice?.message;
+
+  if (!message || typeof message.refusal === 'string' || typeof message.content !== 'string') {
+    return {
+      ok: false,
+      code: 'invalid_model_response_shape',
+      diagnostics: {
+        finishReason: asFinishReason(choice?.finish_reason),
+        messagePresent: Boolean(message),
+        contentType: typeof message?.content,
+        contentLength: typeof message?.content === 'string' ? message.content.length : null,
+        refusalPresent: typeof message?.refusal === 'string',
+      },
+    };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(message.content);
+  } catch {
+    return {
+      ok: false,
+      code: 'invalid_model_json',
+      diagnostics: { contentLength: message.content.length },
+    };
+  }
+
+  const result = parseQuickReadResult(parsed);
+  if (!result) {
+    return {
+      ok: false,
+      code: 'invalid_model_schema',
+      diagnostics: {
+        keys: parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? Object.keys(parsed) : [],
+      },
+    };
+  }
+
+  return { ok: true, result };
+}
