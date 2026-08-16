@@ -170,7 +170,8 @@ async function analyzeTranscript(transcript: string, apiKey: string): Promise<Qu
           schema: quickReadResultSchema,
         },
       },
-      max_completion_tokens: 700,
+      reasoning_effort: 'low',
+      max_completion_tokens: 1200,
     }),
   });
   if (!response.ok) {
@@ -181,10 +182,18 @@ async function analyzeTranscript(transcript: string, apiKey: string): Promise<Qu
   }
 
   const payload = await response.json().catch(() => null) as {
-    choices?: Array<{ message?: { content?: unknown; refusal?: unknown } }>;
+    choices?: Array<{ finish_reason?: unknown; message?: { content?: unknown; refusal?: unknown } }>;
   } | null;
-  const message = payload?.choices?.[0]?.message;
+  const choice = payload?.choices?.[0];
+  const message = choice?.message;
   if (!message || typeof message.refusal === 'string' || typeof message.content !== 'string') {
+    console.warn('feedback_invalid_response_shape', {
+      finishReason: choice?.finish_reason ?? null,
+      messagePresent: Boolean(message),
+      contentType: typeof message?.content,
+      contentLength: typeof message?.content === 'string' ? message.content.length : null,
+      refusalPresent: typeof message?.refusal === 'string',
+    });
     throw new ProviderError('invalid_model_response', false);
   }
 
@@ -192,10 +201,14 @@ async function analyzeTranscript(transcript: string, apiKey: string): Promise<Qu
   try {
     parsed = JSON.parse(message.content);
   } catch {
+    console.warn('feedback_invalid_json', { contentLength: message.content.length });
     throw new ProviderError('invalid_model_response', false);
   }
   const result = parseQuickReadResult(parsed);
   if (!result) {
+    console.warn('feedback_schema_validation_failed', {
+      keys: parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? Object.keys(parsed) : [],
+    });
     throw new ProviderError('invalid_model_response', false);
   }
   return result;

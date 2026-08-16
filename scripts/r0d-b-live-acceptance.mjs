@@ -104,6 +104,8 @@ const ownerUser = await rest('/auth/v1/user');
 assert(ownerUser.status === 200 && ownerUser.body?.id, 'owner token is not valid');
 assert(ownerUser.body.is_anonymous !== true, 'fresh permanent disposable test user is required');
 const ownerId = ownerUser.body.id;
+const preConsumedCount = Number(process.env.R0D_B_PRECONSUMED_COUNT ?? '0');
+assert(Number.isInteger(preConsumedCount) && preConsumedCount >= 0 && preConsumedCount <= 2, 'R0D_B_PRECONSUMED_COUNT must be an integer from 0 to 2');
 const audioBytes = new Uint8Array(await readFile(audioPath));
 const audioExtension = (audioPath.split('.').pop() ?? 'wav').toLowerCase();
 assert(['m4a', 'mp4', 'webm', 'wav', 'ogg'].includes(audioExtension), 'unsupported R0D_B_AUDIO_PATH extension');
@@ -166,13 +168,17 @@ try {
   assert(otherResult.error || otherResult.data?.length === 0, 'cross-user result read unexpectedly succeeded');
 
   const quotaStatuses = [];
-  for (let index = 0; index < 3; index += 1) {
+  const remainingAcceptedRequests = 2 - preConsumedCount;
+  for (let index = 0; index < remainingAcceptedRequests; index += 1) {
     const quotaAttempt = await createAttempt('r0d-b-quota-' + Date.now() + '-' + index);
     createdAttempts.push(quotaAttempt);
     const quotaRun = await requestRun(quotaAttempt, 'r0d-b-quota-key-' + Date.now() + '-' + index);
     quotaStatuses.push(quotaRun.status);
   }
-  assert(quotaStatuses[0] === 200 && quotaStatuses[1] === 200 && quotaStatuses[2] >= 400, 'fourth daily request was not rejected');
+  const fourthAttempt = await createAttempt('r0d-b-quota-fourth-' + Date.now());
+  createdAttempts.push(fourthAttempt);
+  const fourthRequest = await requestRun(fourthAttempt, 'r0d-b-quota-fourth-key-' + Date.now());
+  assert(quotaStatuses.every((status) => status === 200) && fourthRequest.status >= 400, 'fourth daily request was not rejected');
 
   console.log(JSON.stringify({
     result: 'R0D-B live acceptance passed',
@@ -182,6 +188,7 @@ try {
     duplicateCompletedWithoutRetryChange: true,
     crossUserDenied: true,
     fourthDailyRequestRejected: true,
+    preConsumedCount,
     transcriptExpiry: run.transcript_expires_at,
     audioExpiry: run.audio_expires_at,
   }, null, 2));
