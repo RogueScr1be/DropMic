@@ -200,3 +200,24 @@ The test quota was reset only for the disposable development user before the fin
 ## R0D-C scope
 
 R0D-C is limited to retry orchestration, cleanup replay/idempotency, terminal-state protection, account-deletion completeness, and protected test-only provider fault injection. Production must never accept client-controlled fault modes, and no new product functionality belongs in this phase.
+
+## R0D-C lifecycle acceptance
+
+R0D-C passed against the linked development project with a harness-created confirmed synthetic Supabase user. The harness signed in through the public client, exercised normal RLS, and removed the user through the account-deletion path with an admin fallback only if needed.
+
+Live evidence:
+
+- transient transcription failure retried and succeeded;
+- transient feedback failure retried with the persisted transcript and succeeded;
+- two transient retries exhausted into deterministic `failed`;
+- concurrent duplicate invocation performed one transcription and one feedback provider execution;
+- terminal-state regression was rejected;
+- abandoned active run was surfaced and recovered by cleanup;
+- expired failed audio cleanup was replayable and idempotent;
+- 30-day transcript cleanup removed transcript content while preserving results and metrics;
+- account deletion removed attempts, metrics, runs, transcripts/results, and the disposable user's Storage objects;
+- final disposable-user counts were zero for auth user, attempts, metrics, runs, transcripts, results, and Storage objects.
+
+The live pass found and corrected two lifecycle defects: feedback retries needed an `uploading → analyzing` transition when a transcript already existed, and the harness needed schema-valid expired timestamps. Storage absence proof uses a bounded consistency wait plus the Storage catalog and service-role read boundary. Email delivery, SMTP, OTP templates, and callback routing were intentionally not part of R0D-C; those remain covered by R0C.
+
+R0D lifecycle hardening: **PASS**. R0D is fully accepted at the current implementation commit after validation.

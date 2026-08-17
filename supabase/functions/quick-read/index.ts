@@ -5,7 +5,13 @@ import {
   quickReadResultSchema,
   type QuickReadResult,
 } from '../_shared/quick-read-contract.ts';
-import type { FeedbackAdapter, TranscriptionAdapter } from '../_shared/provider-adapters.ts';
+import {
+  createDeterministicTestAdapters,
+  ProviderAdapterError,
+  type FeedbackAdapter,
+  type TestFaultMode,
+  type TranscriptionAdapter,
+} from '../_shared/provider-adapters.ts';
 import { nextProviderRetryCount } from '../_shared/retry-policy.ts';
 
 const AUDIO_BUCKET = 'quick-read-audio';
@@ -24,24 +30,24 @@ type AnalysisRun = {
   audio_expires_at: string;
   transcript_expires_at: string;
   safe_error_code: string | null;
+  audio_cleanup_status: 'pending' | 'deleted' | 'failed';
+  audio_cleanup_attempts: number;
 };
-
-class ProviderError extends Error {
-  transient: boolean;
-  safeCode: string;
-
-  constructor(safeCode: string, transient: boolean) {
-    super(safeCode);
-    this.name = 'ProviderError';
-    this.safeCode = safeCode;
-    this.transient = transient;
-  }
-}
 
 class CleanupError extends Error {
   constructor() {
     super('audio_cleanup_failed');
     this.name = 'CleanupError';
+  }
+}
+
+class LifecycleError extends Error {
+  safeCode: string;
+
+  constructor(safeCode: string) {
+    super(safeCode);
+    this.name = 'LifecycleError';
+    this.safeCode = safeCode;
   }
 }
 
@@ -78,9 +84,9 @@ async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit) {
     return await fetch(input, { ...init, signal: controller.signal });
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new ProviderError('provider_timeout', true);
+      throw new ProviderAdapterError('provider_timeout', true);
     }
-    throw new ProviderError('provider_transport', true);
+    throw new ProviderAdapterError('provider_transport', true);
   } finally {
     clearTimeout(timeout);
   }
@@ -104,7 +110,7 @@ function mimeTypeForExtension(extension: string) {
 function extensionForPath(path: string) {
   const extension = path.split('.').at(-1)?.toLowerCase();
   if (!extension || !['m4a', 'mp4', 'webm', 'wav', 'ogg'].includes(extension)) {
-    throw new ProviderError('unsupported_audio', false);
+    throw new ProviderAdapterError('unsupported_audio', false);
   }
   return extension;
 }
@@ -126,7 +132,7 @@ async function transcribeAudio(audio: Blob, path: string, apiKey: string) {
     body: form,
   });
   if (!response.ok) {
-    throw new ProviderError(
+    throw new ProviderAdapterError(
       isTransientHttpStatus(response.status) ? 'transcription_provider_transient' : 'transcription_provider_rejected',
       isTransientHttpStatus(response.status),
     );
@@ -134,10 +140,10 @@ async function transcribeAudio(audio: Blob, path: string, apiKey: string) {
 
   const payload = await response.json().catch(() => null) as { text?: unknown } | null;
   if (!payload || typeof payload.text !== 'string' || payload.text.trim().length === 0) {
-    throw new ProviderError('invalid_transcription_response', false);
+    throw new ProviderAdapterError('invalid_transcription_response', false);
   }
   if (payload.text.length > 200_000) {
-    throw new ProviderError('transcript_too_large', false);
+    throw new ProviderAdapterError('transcript_too_large', false);
   }
   return payload.text.trim();
 }
@@ -175,7 +181,7 @@ async function analyzeTranscript(transcript: string, apiKey: string): Promise<Qu
     }),
   });
   if (!response.ok) {
-    throw new ProviderError(
+    throw new ProviderAdapterError(
       isTransientHttpStatus(response.status) ? 'feedback_provider_transient' : 'feedback_provider_rejected',
       isTransientHttpStatus(response.status),
     );
@@ -188,7 +194,7 @@ async function analyzeTranscript(transcript: string, apiKey: string): Promise<Qu
       code: parsed.code,
       ...parsed.diagnostics,
     });
-    throw new ProviderError(parsed.code, false);
+    throw new ProviderAdapterError(parsed.code, false);
   }
   return parsed.result;
 }
@@ -205,12 +211,12 @@ function countFillerWords(transcript: string) {
 async function getRun(admin: SupabaseClient, runId: string, ownerId: string) {
   const { data, error } = await admin
     .from('analysis_runs')
-    .select('id,attempt_id,owner_id,status,retry_count,audio_object_path,audio_expires_at,transcript_expires_at,safe_error_code')
+    .select('id,attempt_id,owner_id,status,retry_count,audio_object_path,audio_expires_at,transcript_expires_at,safe_error_code,audio_cleanup_status,audio_cleanup_attempts')
     .eq('id', runId)
     .eq('owner_id', ownerId)
     .maybeSingle();
   if (error) {
-    throw new Error('run_lookup_failed');
+    throw new LifecycleError('run_lookup_failed');
   }
   return data as AnalysisRun | null;
 }
@@ -223,7 +229,7 @@ async function getResult(admin: SupabaseClient, runId: string, ownerId: string) 
     .eq('owner_id', ownerId)
     .maybeSingle();
   if (error) {
-    throw new Error('result_lookup_failed');
+    throw new LifecycleError('result_lookup_failed');
   }
   if (!data) {
     return null;
@@ -242,7 +248,7 @@ async function getResult(admin: SupabaseClient, runId: string, ownerId: string) 
 async function updateRun(admin: SupabaseClient, runId: string, updates: Record<string, unknown>) {
   const { error } = await admin.from('analysis_runs').update(updates).eq('id', runId);
   if (error) {
-    throw new Error('run_update_failed');
+    throw new LifecycleError('run_update_failed');
   }
 }
 
@@ -253,23 +259,58 @@ async function deleteAudio(admin: SupabaseClient, path: string) {
   }
 }
 
+async function recordProviderAttempt(admin: SupabaseClient, runId: string, stage: 'transcription' | 'feedback') {
+  const { error } = await admin.rpc('record_analysis_provider_attempt', {
+    p_run_id: runId,
+    p_stage: stage,
+  });
+  if (error) {
+    throw new LifecycleError('provider_attempt_record_failed');
+  }
+}
+
+async function cleanupAudio(admin: SupabaseClient, run: AnalysisRun) {
+  const attempts = run.audio_cleanup_attempts;
+  try {
+    await deleteAudio(admin, run.audio_object_path);
+    await updateRun(admin, run.id, {
+      audio_cleanup_status: 'deleted',
+      audio_cleanup_last_error: null,
+      audio_cleanup_last_error_at: null,
+      audio_deleted_at: new Date().toISOString(),
+    });
+    return true;
+  } catch {
+    await updateRun(admin, run.id, {
+      audio_cleanup_status: 'failed',
+      audio_cleanup_attempts: attempts + 1,
+      audio_cleanup_last_error: 'audio_cleanup_failed',
+      audio_cleanup_last_error_at: new Date().toISOString(),
+      safe_error_code: 'audio_cleanup_failed',
+    });
+    return false;
+  }
+}
+
 async function finishStoredResult(
   admin: SupabaseClient,
   run: AnalysisRun,
   ownerId: string,
   result: QuickReadResult,
 ) {
-  try {
-    await deleteAudio(admin, run.audio_object_path);
-  } catch {
-    await updateRun(admin, run.id, { status: 'failed', safe_error_code: 'audio_cleanup_failed' });
+  if (!await cleanupAudio(admin, run)) {
     return json({ status: 'failed', error: 'audio_cleanup_failed' }, 503);
   }
-  await updateRun(admin, run.id, {
-    status: 'completed',
-    completed_at: new Date().toISOString(),
-    safe_error_code: null,
-  });
+  if (run.status !== 'completed') {
+    await updateRun(admin, run.id, {
+      status: 'completed',
+      completed_at: new Date().toISOString(),
+      safe_error_code: null,
+      audio_cleanup_status: 'deleted',
+    });
+  } else {
+    await updateRun(admin, run.id, { safe_error_code: null, audio_cleanup_status: 'deleted' });
+  }
   return json({ status: 'completed', result });
 }
 
@@ -306,7 +347,7 @@ async function processRun(
         .eq('run_id', run.id)
         .maybeSingle();
       if (transcriptLookupError) {
-        throw new Error('transcript_lookup_failed');
+        throw new LifecycleError('transcript_lookup_failed');
       }
       transcript = storedTranscript?.transcript ?? null;
 
@@ -319,8 +360,9 @@ async function processRun(
           .from(AUDIO_BUCKET)
           .download(run.audio_object_path);
         if (audioError || !audio) {
-          throw new ProviderError('audio_unavailable', false);
+          throw new ProviderAdapterError('audio_unavailable', false);
         }
+        await recordProviderAttempt(admin, run.id, 'transcription');
         transcript = await transcriptionAdapter.transcribe(audio, run.audio_object_path);
         const { error: transcriptWriteError } = await admin.from('analysis_transcripts').upsert({
           run_id: run.id,
@@ -330,7 +372,7 @@ async function processRun(
           transcript_expires_at: run.transcript_expires_at,
         }, { onConflict: 'run_id' });
         if (transcriptWriteError) {
-          throw new Error('transcript_write_failed');
+          throw new LifecycleError('transcript_write_failed');
         }
       }
 
@@ -338,6 +380,7 @@ async function processRun(
         status: 'analyzing',
         feedback_model_version: feedbackAdapter.model,
       });
+      await recordProviderAttempt(admin, run.id, 'feedback');
       const result = await feedbackAdapter.analyze(transcript);
       const wordCount = countWords(transcript);
       const { error: resultWriteError } = await admin.from('analysis_results').upsert({
@@ -356,7 +399,7 @@ async function processRun(
         analysis_version: ANALYSIS_VERSION,
       }, { onConflict: 'run_id' });
       if (resultWriteError) {
-        throw new Error('result_write_failed');
+        throw new LifecycleError('result_write_failed');
       }
 
       const minutes = Math.max(1 / 60, attempt.completed_duration_seconds / 60);
@@ -373,12 +416,10 @@ async function processRun(
         derived_metrics: { analysis_version: ANALYSIS_VERSION },
       }).eq('attempt_id', run.attempt_id).eq('user_id', ownerId);
       if (metricError) {
-        throw new Error('metrics_write_failed');
+        throw new LifecycleError('metrics_write_failed');
       }
 
-      try {
-        await deleteAudio(admin, run.audio_object_path);
-      } catch {
+      if (!await cleanupAudio(admin, { ...run, audio_cleanup_status: 'pending' })) {
         await updateRun(admin, run.id, { status: 'failed', safe_error_code: 'audio_cleanup_failed' });
         return json({ status: 'failed', error: 'audio_cleanup_failed' }, 503);
       }
@@ -388,11 +429,13 @@ async function processRun(
         completed_at: new Date().toISOString(),
         retry_count: retryCount,
         safe_error_code: null,
+        audio_cleanup_status: 'deleted',
       });
       return json({ status: 'completed', result });
     } catch (error) {
-      const providerError = error instanceof ProviderError ? error : null;
-      const safeCode = providerError?.safeCode ?? 'analysis_persistence_failed';
+      const providerError = error instanceof ProviderAdapterError ? error : null;
+      const lifecycleError = error instanceof LifecycleError ? error : null;
+      const safeCode = providerError?.safeCode ?? lifecycleError?.safeCode ?? 'analysis_persistence_failed';
       const nextRetryCount = providerError?.transient ? nextProviderRetryCount(retryCount) : null;
       if (nextRetryCount !== null) {
         retryCount = nextRetryCount;
@@ -440,11 +483,12 @@ async function handler(request: Request) {
       return json({ error: 'permanent_account_required' }, 403);
     }
 
-    const body = await request.json().catch(() => null) as { runId?: unknown } | null;
+    const body = await request.json().catch(() => null) as { runId?: unknown; testFault?: unknown } | null;
     const runId = typeof body?.runId === 'string' ? body.runId : '';
     if (!/^[0-9a-f-]{36}$/i.test(runId)) {
       return json({ error: 'run_id_required' }, 400);
     }
+    const testFault = parseTestFault(body?.testFault, request);
 
     const ownerId = userData.user.id;
     const run = await getRun(admin, runId, ownerId);
@@ -454,7 +498,12 @@ async function handler(request: Request) {
 
     if (run.status === 'completed') {
       const result = await getResult(admin, run.id, ownerId);
-      return result ? json({ status: 'completed', result }) : json({ error: 'completed_result_missing' }, 500);
+      if (!result) {
+        return json({ error: 'completed_result_missing' }, 500);
+      }
+      return run.audio_cleanup_status === 'deleted'
+        ? json({ status: 'completed', result })
+        : finishStoredResult(admin, run, ownerId, result);
     }
 
     if (run.status === 'failed') {
@@ -471,7 +520,7 @@ async function handler(request: Request) {
       .eq('id', run.id)
       .eq('owner_id', ownerId)
       .in('status', ['requested', 'retry_pending'])
-      .select('id,attempt_id,owner_id,status,retry_count,audio_object_path,audio_expires_at,transcript_expires_at,safe_error_code')
+      .select('id,attempt_id,owner_id,status,retry_count,audio_object_path,audio_expires_at,transcript_expires_at,safe_error_code,audio_cleanup_status,audio_cleanup_attempts')
       .maybeSingle();
     if (claimError) {
       return json({ error: 'analysis_claim_failed' }, 500);
@@ -480,18 +529,58 @@ async function handler(request: Request) {
       return json({ status: 'processing' }, 202);
     }
 
-    const transcriptionAdapter: TranscriptionAdapter = {
-      model: TRANSCRIPTION_MODEL,
-      transcribe: (audio, path) => transcribeAudio(audio, path, openAiKey),
-    };
-    const feedbackAdapter: FeedbackAdapter = {
-      model: FEEDBACK_MODEL,
-      analyze: (transcript) => analyzeTranscript(transcript, openAiKey),
-    };
-    return await processRun(admin, claimedRun as AnalysisRun, ownerId, transcriptionAdapter, feedbackAdapter);
+    const adapters = testFault
+      ? createDeterministicTestAdapters(testFault)
+      : {
+          transcription: {
+            model: TRANSCRIPTION_MODEL,
+            transcribe: (audio: Blob, path: string) => transcribeAudio(audio, path, openAiKey),
+          } satisfies TranscriptionAdapter,
+          feedback: {
+            model: FEEDBACK_MODEL,
+            analyze: (transcript: string) => analyzeTranscript(transcript, openAiKey),
+          } satisfies FeedbackAdapter,
+        };
+    return await processRun(admin, claimedRun as AnalysisRun, ownerId, adapters.transcription, adapters.feedback);
   } catch {
     return json({ error: 'quick_read_unavailable' }, 500);
   }
+}
+
+function parseTestFault(value: unknown, request: Request): {
+  transcription: TestFaultMode;
+  feedback: TestFaultMode;
+  transientFailures: number;
+} | null {
+  if (value === undefined) {
+    return null;
+  }
+  if (Deno.env.get('R0D_TEST_MODE') !== 'true') {
+    throw new Error('test_fault_mode_unavailable');
+  }
+  const secret = Deno.env.get('R0D_TEST_SECRET');
+  if (!secret || request.headers.get('x-r0d-test-secret') !== secret) {
+    throw new Error('test_fault_authentication_required');
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('invalid_test_fault_config');
+  }
+  const config = value as Record<string, unknown>;
+  const modes: TestFaultMode[] = ['SUCCESS', 'TRANSIENT_ERROR', 'PERMANENT_ERROR', 'TIMEOUT', 'INVALID_SCHEMA'];
+  const transcription = config.transcription ?? 'SUCCESS';
+  const feedback = config.feedback ?? 'SUCCESS';
+  const transientFailures = config.transientFailures ?? 1;
+  if (!modes.includes(transcription as TestFaultMode) || !modes.includes(feedback as TestFaultMode)) {
+    throw new Error('invalid_test_fault_config');
+  }
+  if (!Number.isInteger(transientFailures) || (transientFailures as number) < 0 || (transientFailures as number) > 3) {
+    throw new Error('invalid_test_fault_config');
+  }
+  return {
+    transcription: transcription as TestFaultMode,
+    feedback: feedback as TestFaultMode,
+    transientFailures: transientFailures as number,
+  };
 }
 
 Deno.serve(handler);

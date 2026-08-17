@@ -89,6 +89,30 @@ Revisit before public beta or App Store release, or earlier if a prioritized-pla
 
 Remove the limitation only after focused Android and Safari validation covers permission, recording, automatic stop, playback, interruption, retry, deletion, non-zero file output, actual file properties, and runtime format, with no critical or high security findings.
 
+## 2026-08-16 — Keep R0D-C live acceptance independent of email
+
+### Decision
+
+The R0D-C development harness creates a unique confirmed synthetic Supabase user with a server-only service-role key, signs that user in through the public client, runs all lifecycle checks under normal RLS, and deletes the user through the normal account-deletion path with an admin deletion fallback.
+
+### Rationale
+
+R0C already accepted the production OTP/Auth delivery path. Reusing email delivery for lifecycle hardening adds an unrelated external dependency and can obscure retry, cleanup, and deletion failures.
+
+### Guardrails
+
+The service-role key is accepted only by the Node development harness and never by Expo code, browser code, or production auth. The synthetic account uses a non-deliverable unique address, `email_confirm: true`, and a generated password. No SMTP, OTP template, RLS, quota, or production Auth behavior changes are allowed.
+
+## 2026-08-16 — Permit persisted-transcript feedback retries
+
+### Decision
+
+The analysis-run state machine permits `uploading → analyzing` when a feedback retry resumes after a transcript was already persisted.
+
+### Rationale
+
+The retry loop intentionally skips transcription when the transcript exists. Requiring a second transcription state would add unnecessary work and could violate the provider idempotency contract. The transition remains non-terminal and the two-retry limit is unchanged.
+
 ## 2026-07-18 — Metadata-only local attempt claim
 
 Completed attempts are claimed with topic, selected duration, completed duration, completion time, and a client id. The local URI is deliberately excluded from Postgres and `audio_retained` is forced false for R0C.

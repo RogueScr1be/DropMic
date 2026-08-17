@@ -157,3 +157,36 @@
 - Cause: the harness removed the `quick-read/` folder from the server-owned object path before calling Storage. The app correctly uploads the complete `quick-read/{user_id}/{attempt_id}/source.<ext>` path, and the deployed policy intentionally requires that folder.
 - Resolution: corrected both live harnesses to pass the complete server-owned path; no RLS policy or application upload contract was changed.
 - Prevention: acceptance scripts must use `analysis_runs.audio_object_path` verbatim and must assert that owner upload and cross-user denial are both exercised against that exact path.
+
+## 2026-08-16 — R0D-C orphan-storage query used the wrong owner-id type
+
+- Symptom: the lifecycle-hardening migration was rejected by the linked development database before application, with `operator does not exist: uuid = text` in the orphan Storage query.
+- Cause: this project's `storage.objects.owner_id` column is `text`, while `auth.users.id` is `uuid`.
+- Resolution: compare `auth.users.id::text` to `storage.objects.owner_id`; no partial migration was accepted.
+- Prevention: inspect deployed system-table column types before adding cross-schema cleanup queries, then run a dry-run and linked migration push before Edge Function deployment.
+
+## 2026-08-16 — R0D-C feedback retry was rejected by the terminal-state guard
+
+- Symptom: a transient feedback failure returned `analysis_persistence_failed` instead of retrying to success.
+- Cause: the retry loop correctly retained the persisted transcript, then resumed from `uploading` directly to `analyzing`; the transition guard allowed `uploading` to enter transcription but not analysis.
+- Resolution: allow `uploading → analyzing` for the persisted-transcript retry path. Retry limits and terminal-state protections remain unchanged.
+- Prevention: lifecycle transition tests must cover both transcription retries without a transcript and feedback retries with a persisted transcript.
+
+## 2026-08-16 — R0D-C expiry fixture violated the run retention invariant
+
+- Symptom: the live harness could not mark failed audio expired because its update set `audio_expires_at` before `requested_at`.
+- Cause: `analysis_runs` intentionally requires both retention deadlines to be after `requested_at`; the fixture used `now() - interval '1 minute'`, which could precede the request timestamp for a newly created run.
+- Resolution: set the fixture deadline to `requested_at + interval '1 second'`, which remains schema-valid and is already expired when cleanup runs.
+- Prevention: lifecycle harnesses must create expired timestamps that satisfy row-level retention constraints rather than overwriting them with arbitrary past times.
+
+## 2026-08-16 — R0D-C Storage deletion evidence needed a consistency wait
+
+- Symptom: immediately after a successful Storage removal, the first authenticated object read could still report the object as present even though the cleanup path had removed it from the development Storage catalog.
+- Resolution: the lifecycle harness now polls for confirmed object absence before accepting successful, expired-audio, or account-deletion cleanup.
+- Prevention: Storage deletion acceptance must verify absence after a bounded consistency window, not rely on a single immediate read.
+
+## 2026-08-16 — R0D-C abandonment fixture was normalized by the update timestamp trigger
+
+- Symptom: the cleanup harness could not create a stale active run because the normal `set_updated_at` trigger replaced the backdated timestamp with the current time.
+- Resolution: the development-only fixture now backdates `updated_at` inside a single transaction with `session_replication_role = replica`; no production trigger or cleanup behavior changes.
+- Prevention: lifecycle fixtures must account for production timestamp triggers when constructing old-row conditions.
