@@ -171,3 +171,125 @@ The RPC keeps deletion owner-scoped and removes all user metadata in one call, b
 ### Refactor trigger
 
 Move deletion to a reviewed Edge Function only if the target Supabase deployment disallows the security-definer function or requires an audited deletion workflow.
+
+## 2026-08-17 — Lock the DropMic monetization contract before purchase work
+
+### Decision
+
+The complete R0E contract is recorded in [notes/r0e-monetization-contract.md](/Users/thewhitley/MicDrop/notes/r0e-monetization-contract.md). DropMic Free, DropMic Plus, and permanent Skill Packs remain economically separate. Plus does not grant Packs, and Pack ownership does not grant Plus.
+
+R0F Purchase Foundation is blocked until the core lifecycle production-repair gate and the minimum Free-product gate are accepted. The August 31 paid-release target is withdrawn pending evidence-based replanning.
+
+### Alternatives considered
+
+- Begin RevenueCat and paywall work immediately from the earlier August schedule.
+- Build all missing Free features, Packs, and commerce in one combined milestone.
+- Lock the product, identity, entitlement, privacy, and sequencing contracts first.
+
+### Tradeoffs
+
+The documentation gate delays purchase implementation but prevents product, pricing, entitlement, and retention assumptions from becoming runtime contracts. The minimum Free gate intentionally narrows launch scope; challenges, richer history, Mic Saves, and expanded content remain separately prioritized.
+
+### Refactor triggers
+
+Revisit the contract only when pricing, Pack scope, store configuration, or the retention/account-deletion model changes. Do not create a parallel customer identity or permit client-only paid access.
+
+## 2026-08-17 — Use the stable Supabase UUID as the future purchase identity
+
+### Decision
+
+The stable `auth.users.id`/owner UUID is the sole future purchase identity and will become the RevenueCat App User ID. Anonymous-to-email conversion must preserve it; no parallel customer-account system is allowed.
+
+### Alternatives considered
+
+- Generate a separate RevenueCat customer ID.
+- Key purchases by email address.
+- Reuse the existing stable Supabase UUID.
+
+### Tradeoffs
+
+The UUID preserves identity across email conversion and aligns provider access with server ownership. Account deletion must later define cleanup of RevenueCat identity, entitlement mirrors, metrics, transcripts, audio, and Storage.
+
+### Refactor trigger
+
+Revisit only if Supabase identity cannot remain stable across an approved auth migration.
+
+## 2026-08-17 — Keep paid access server-authoritative
+
+### Decision
+
+Cached client entitlement state may affect display only. The server must resolve Plus status, Pack ownership, quotas, rubric access, and refund/revocation/expiration state before paid provider access.
+
+### Alternatives considered
+
+- Gate paid features only in the client.
+- Treat RevenueCat client state as the authorization boundary.
+- Mirror and resolve entitlement state server-side.
+
+### Tradeoffs
+
+Server resolution adds implementation and synchronization work but prevents modified clients from bypassing paid gates and keeps provider cost bounded.
+
+### Refactor trigger
+
+Revisit only if a reviewed server-side authorization design proves equivalent enforcement under offline and revocation conditions.
+
+## 2026-08-17 — Persist derived progress without extending raw-audio retention
+
+### Decision
+
+Paid value may persist derived metrics and coaching signals, but Plus must not extend successful-audio, failed-audio, or transcript retention boundaries. `KEEP THIS TAKE` is deferred until explicit consent, individual deletion, storage management, and account-deletion behavior exist.
+
+### Alternatives considered
+
+- Retain raw audio for Plus users.
+- Store only ephemeral feedback.
+- Persist derived signals while keeping audio/transcript TTLs unchanged.
+
+### Tradeoffs
+
+Derived progress supports Take Two and long-term improvement without turning raw voice recordings into a permanent library. It requires versioned metrics and deletion-aware account design.
+
+### Refactor trigger
+
+Revisit only through an explicit retention and storage-management contract.
+
+## 2026-08-17 — Make Take Two the central paid mechanism
+
+### Decision
+
+Take Two comparison is the central Plus value proof: one useful correction followed by an observable second attempt. The primary product metric is feedback-to-second-take rate, followed by targeted-behavior improvement.
+
+### Alternatives considered
+
+- Lead with generic confidence scores.
+- Lead with an open-ended AI coach.
+- Lead with correction-to-Take-Two improvement.
+
+### Tradeoffs
+
+Take Two is narrower and requires calibrated observable metrics, but it is testable and aligned with the product loop. Opaque composite scores and sensitive inference remain excluded.
+
+### Refactor trigger
+
+Revisit if controlled product evidence shows a different repeatable behavior is a stronger value proof.
+
+## 2026-08-17 — Block R0F behind lifecycle and minimum Free gates
+
+### Decision
+
+Before RevenueCat implementation, Gate A must repair attempt identity, scheduled cleanup, Storage deletion, deletion verification, and timeout bounds. Gate B must establish the minimum Free foundation: named Cold Take, Freestyle, minimum Interview Basics and Student Basics content, Mic Flow, recent history, feedback-to-retry, and focused core-loop analytics.
+
+### Alternatives considered
+
+- Start R0F immediately.
+- Bundle every missing Free feature into one large milestone.
+- Repair production lifecycle behavior and define a minimum Free foundation first.
+
+### Tradeoffs
+
+The gates reduce parallelism and delay commerce, but they protect user data and ensure paid work is attached to a launchable Free loop. Challenges, richer history, Mic Saves, and expanded content remain separate decisions.
+
+### Refactor trigger
+
+Replan only after both gates have evidence-backed acceptance criteria and results.

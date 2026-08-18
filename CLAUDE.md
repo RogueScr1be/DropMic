@@ -58,3 +58,9 @@
 - Start the MicDrop dev server with `npm run start:micdrop` on port 8082 before opening any Auth callback or OTP link; `ERR_CONNECTION_REFUSED` means the local server is down and is separate from email delivery.
 - R0D-C lifecycle acceptance is independent of email delivery: the development harness creates a unique confirmed synthetic user with a server-only service-role key, signs it in through the public client, and deletes it through the normal account-deletion path with an admin fallback. Never expose that key to Expo code or add auto-confirm behavior to production auth.
 - R0D-C permits `uploading → analyzing` when a persisted transcript lets a feedback retry skip transcription; keep retry limits and terminal-state protections unchanged.
+- Every distinct recording receives a fresh server attempt ID and Quick Read idempotency key; only retries of the same take may reuse them.
+- Manual cleanup acceptance is not production retention proof; automatic scheduling and failure monitoring must be verified.
+- Account deletion is incomplete until database rows and Storage objects are independently verified absent.
+- Persistent coaching may store derived signals but cannot extend raw-audio or transcript retention.
+- Paid provider access must be enforced server-side; cached client entitlements are display-only.
+- Do not begin R0F until the lifecycle-repair and minimum-Free gates are accepted.

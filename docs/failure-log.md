@@ -190,3 +190,38 @@
 - Symptom: the cleanup harness could not create a stale active run because the normal `set_updated_at` trigger replaced the backdated timestamp with the current time.
 - Resolution: the development-only fixture now backdates `updated_at` inside a single transaction with `session_replication_role = replica`; no production trigger or cleanup behavior changes.
 - Prevention: lifecycle fixtures must account for production timestamp triggers when constructing old-row conditions.
+
+## 2026-08-17 — Manual cleanup acceptance was treated as scheduled retention proof
+
+- Root cause: the R0D-C harness invoked the cleanup function directly; no production scheduler or monitored recurring invocation is configured in the repository.
+- Category: retention/operations.
+- Blast radius: failed audio and expired transcripts can remain beyond their contractual deadlines if the cleanup function is not invoked.
+- Guardrail: production retention acceptance must prove the scheduler, recurring execution, failure alerting, and bounded object absence for both audio and transcripts.
+
+## 2026-08-17 — Database account deletion was treated as Storage deletion proof
+
+- Root cause: `delete_my_account()` deletes `auth.users` and relies on database cascades; Storage objects are outside those cascades.
+- Category: privacy/data lifecycle.
+- Blast radius: user-owned Storage objects can survive account deletion until a separate cleanup path runs.
+- Guardrail: account deletion is incomplete until database rows and Storage objects are independently verified absent.
+
+## 2026-08-17 — Successive recordings reused client Quick Read identity
+
+- Root cause: the client retained `serverAttemptId` and the Quick Read idempotency key after a completed take was retried or deleted.
+- Category: client state/idempotency.
+- Blast radius: a later recording can return an earlier result, bind to the wrong attempt, or fail an idempotency-key ownership check.
+- Guardrail: every distinct recording must receive a fresh server attempt ID and idempotency key; retries of the same take alone may reuse them.
+
+## 2026-08-17 — Retry timeout arithmetic can exceed the Edge Function budget
+
+- Root cause: the function allows two global retries while each provider request can wait 45 seconds; four sequential provider calls can reach approximately 180 seconds.
+- Category: reliability/cost.
+- Blast radius: transient failures can exceed the Edge Function wall-clock limit, leaving runs active or requiring cleanup recovery.
+- Guardrail: calculate the worst-case provider and persistence budget below the platform limit and test timeout exhaustion explicitly.
+
+## 2026-08-17 — Monetization schedule assumed absent product surfaces and Pack inventory
+
+- Root cause: the proposed schedule assumed modes, history, Mic Flow, challenges, analytics, paid value, and Pack content that are not present in the repository.
+- Category: planning/scope.
+- Blast radius: the August 31 paid-release target is not credible for a single builder and would encourage unsafe bundling.
+- Guardrail: replan from repository evidence after the R0E contract, lifecycle repair, and minimum Free gates are accepted.
