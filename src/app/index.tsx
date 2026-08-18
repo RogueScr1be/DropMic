@@ -4,12 +4,13 @@ import { useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { SignupFlow } from '@/features/auth/SignupFlow';
-import { clearUnclaimedAttempt, createClientAttemptId, getUnclaimedAttempt, saveUnclaimedAttempt, type UnclaimedAttempt } from '@/features/auth/auth-recovery';
+import { clearUnclaimedAttempt, getUnclaimedAttempt, saveUnclaimedAttempt, type UnclaimedAttempt } from '@/features/auth/auth-recovery';
 import { claimUnclaimedAttempt, getSession } from '@/features/auth/auth-service';
 import { PREPARATION_COUNTDOWN_MS, formatCountdownNumber, formatSpeakingTime, phaseForRecordingState, type FirstUsePhase } from '@/features/first-use/first-use-flow';
 import { SplashReveal } from '@/features/first-use/SplashReveal';
 import { useReducedMotion } from '@/features/first-use/use-reduced-motion';
 import { QuickReadFlow } from '@/features/quick-read/QuickReadFlow';
+import { createTakeIdentity, type TakeIdentity } from '@/features/quick-read/attempt-identity';
 import { useLocalAudioRecorder } from '@/features/recording/use-local-audio-recorder';
 import {
   deriveElapsedMs,
@@ -52,11 +53,12 @@ export default function AudioProofScreen() {
   const [isAuthFlowVisible, setIsAuthFlowVisible] = useState(auth === 'complete');
   const [isQuickReadVisible, setIsQuickReadVisible] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
-  const [clientAttemptId, setClientAttemptId] = useState(() => createClientAttemptId());
+  const [takeIdentity, setTakeIdentity] = useState<TakeIdentity>(() => createTakeIdentity());
   const stopInFlight = useRef(false);
   const startInFlight = useRef(false);
   const operationGeneration = useRef(0);
   const countdownTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const takeIdentityRef = useRef(takeIdentity);
 
   const isTablet = width >= 700;
   const elapsed = useMemo(
@@ -78,13 +80,13 @@ export default function AudioProofScreen() {
     }
     return {
       audioRetained: false,
-      clientAttemptId,
+      clientAttemptId: takeIdentity.clientAttemptId,
       completedAt: new Date(completedAtMs).toISOString(),
       completedDurationSeconds: Math.round(elapsedMs / 1000),
       selectedDurationSeconds,
       topicId: topic.id,
     };
-  }, [clientAttemptId, completedAtMs, elapsedMs, recordingState, selectedDurationSeconds, topic.id]);
+  }, [completedAtMs, elapsedMs, recordingState, selectedDurationSeconds, takeIdentity.clientAttemptId, topic.id]);
 
   const refreshRecoveryAttempt = useCallback(async () => {
     setRecoveryAttempt(await getUnclaimedAttempt());
@@ -302,6 +304,14 @@ export default function AudioProofScreen() {
     setPhase('topic_reveal');
   }, [revealKey]);
 
+  const beginNewTake = useCallback(() => {
+    const nextTakeIdentity = createTakeIdentity();
+    takeIdentityRef.current = nextTakeIdentity;
+    setTakeIdentity(nextTakeIdentity);
+    setServerAttemptId(null);
+    setIsQuickReadVisible(false);
+  }, []);
+
   const retryAttempt = useCallback(async () => {
     try {
       operationGeneration.current += 1;
@@ -310,7 +320,7 @@ export default function AudioProofScreen() {
       }
       await clearUnclaimedAttempt();
       setRecoveryAttempt(null);
-      setClientAttemptId(createClientAttemptId());
+      beginNewTake();
       dispatch({ type: 'RETRY' });
       chooseNewTopic();
     } catch (retryError) {
@@ -320,7 +330,7 @@ export default function AudioProofScreen() {
         message: retryError instanceof Error ? retryError.message : 'Unable to retry recording.',
       });
     }
-  }, [audio, chooseNewTopic, dispatch, recordingUri]);
+  }, [audio, beginNewTake, chooseNewTopic, dispatch, recordingUri]);
 
   const deleteAttempt = useCallback(async () => {
     try {
@@ -330,7 +340,7 @@ export default function AudioProofScreen() {
       }
       await clearUnclaimedAttempt();
       setRecoveryAttempt(null);
-      setClientAttemptId(createClientAttemptId());
+      beginNewTake();
       dispatch({ type: 'DELETE_RECORDING' });
       chooseNewTopic();
     } catch (deleteError) {
@@ -340,16 +350,23 @@ export default function AudioProofScreen() {
         message: deleteError instanceof Error ? deleteError.message : 'Unable to delete recording.',
       });
     }
-  }, [audio, chooseNewTopic, dispatch, recordingUri]);
+  }, [audio, beginNewTake, chooseNewTopic, dispatch, recordingUri]);
 
   const openQuickRead = useCallback(async () => {
     try {
+      const requestedTakeId = takeIdentityRef.current.clientAttemptId;
       const session = await getSession();
+      if (takeIdentityRef.current.clientAttemptId !== requestedTakeId) {
+        return;
+      }
       if (!session?.user || session.user.is_anonymous) {
         setIsAuthFlowVisible(true);
         return;
       }
       const attemptId = serverAttemptId ?? (await claimUnclaimedAttempt(currentAttempt));
+      if (takeIdentityRef.current.clientAttemptId !== requestedTakeId) {
+        return;
+      }
       if (typeof attemptId !== 'string') {
         setActionError('Finish account setup before starting a Quick Read.');
         setIsAuthFlowVisible(true);
@@ -481,10 +498,13 @@ export default function AudioProofScreen() {
         visible={isAuthFlowVisible}
       />
       <QuickReadFlow
+        key={takeIdentity.clientAttemptId}
         attemptId={serverAttemptId}
         audioExtension={quickReadAudioExtension(recordingUri)}
         audioUri={recordingUri}
+        idempotencyKey={takeIdentity.quickReadIdempotencyKey}
         onClose={() => setIsQuickReadVisible(false)}
+        takeId={takeIdentity.clientAttemptId}
         visible={isQuickReadVisible}
       />
     </SafeAreaView>

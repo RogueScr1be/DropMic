@@ -1,7 +1,7 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { createClientAttemptId } from '@/features/auth/auth-recovery';
+import { isCurrentTake } from './attempt-identity';
 import { startQuickRead } from './quick-read-service';
 import type { QuickReadResult } from '../../../supabase/functions/_shared/quick-read-contract';
 
@@ -11,21 +11,45 @@ export function QuickReadFlow({
   attemptId,
   audioExtension,
   audioUri,
+  idempotencyKey,
   onClose,
+  takeId,
   visible,
 }: {
   attemptId: string | null;
   audioExtension: 'm4a' | 'mp4' | 'webm' | 'wav' | 'ogg';
   audioUri: string | null;
+  idempotencyKey: string;
   onClose: () => void;
+  takeId: string;
   visible: boolean;
 }) {
   const [step, setStep] = useState<QuickReadStep>('consent');
   const [result, setResult] = useState<QuickReadResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const idempotencyKey = useRef(createClientAttemptId()).current;
+  const [stepTakeId, setStepTakeId] = useState(takeId);
+  const activeTakeId = useRef(takeId);
+  const requestGeneration = useRef(0);
+  const runInFlight = useRef(false);
+
+  useEffect(() => {
+    activeTakeId.current = takeId;
+    requestGeneration.current += 1;
+    runInFlight.current = false;
+    return () => {
+      requestGeneration.current += 1;
+      runInFlight.current = false;
+    };
+  }, [takeId]);
+
+  const currentStep = stepTakeId === takeId ? step : 'consent';
+  const currentResult = stepTakeId === takeId ? result : null;
+  const currentError = stepTakeId === takeId ? error : null;
 
   const close = () => {
+    requestGeneration.current += 1;
+    runInFlight.current = false;
+    setStepTakeId(takeId);
     setStep('consent');
     setResult(null);
     setError(null);
@@ -33,11 +57,18 @@ export function QuickReadFlow({
   };
 
   const run = async () => {
+    if (runInFlight.current) {
+      return;
+    }
     if (!attemptId || !audioUri) {
       setError('The completed take is not ready for Quick Read.');
       setStep('error');
       return;
     }
+    const requestTakeId = takeId;
+    const requestId = ++requestGeneration.current;
+    runInFlight.current = true;
+    setStepTakeId(takeId);
     setError(null);
     setStep('processing');
     try {
@@ -47,9 +78,17 @@ export function QuickReadFlow({
         audioExtension,
         idempotencyKey,
       });
+      if (requestGeneration.current !== requestId || !isCurrentTake(requestTakeId, activeTakeId.current)) {
+        return;
+      }
+      runInFlight.current = false;
       setResult(response.result);
       setStep('result');
     } catch (runError) {
+      if (requestGeneration.current !== requestId || !isCurrentTake(requestTakeId, activeTakeId.current)) {
+        return;
+      }
+      runInFlight.current = false;
       setError(runError instanceof Error ? runError.message : "Quick Read couldn't finish.");
       setStep('error');
     }
@@ -66,7 +105,7 @@ export function QuickReadFlow({
             </Pressable>
           </View>
 
-          {step === 'consent' && (
+          {currentStep === 'consent' && (
             <>
               <Text accessibilityRole="header" style={styles.title}>A short read on your take.</Text>
               <Text style={styles.body}>Upload this recording for a brief, private analysis of clarity, structure, specificity, and concision.</Text>
@@ -80,7 +119,7 @@ export function QuickReadFlow({
             </>
           )}
 
-          {step === 'processing' && (
+          {currentStep === 'processing' && (
             <View style={styles.center}>
               <Text style={styles.kicker}>PRIVATE PROCESSING</Text>
               <Text accessibilityRole="header" style={styles.title}>Listening for the useful part.</Text>
@@ -88,28 +127,28 @@ export function QuickReadFlow({
             </View>
           )}
 
-          {step === 'error' && (
+          {currentStep === 'error' && (
             <>
               <Text accessibilityRole="header" style={styles.title}>Quick Read paused safely.</Text>
-              <Text style={styles.body}>{error ?? "Quick Read couldn't finish."}</Text>
+              <Text style={styles.body}>{currentError ?? "Quick Read couldn't finish."}</Text>
               <FlowButton label="Try Quick Read again" onPress={() => void run()} />
               <FlowButton label="Close" onPress={close} secondary />
             </>
           )}
 
-          {step === 'result' && result && (
+          {currentStep === 'result' && currentResult && (
             <>
               <Text accessibilityRole="header" style={styles.title}>Here’s your Quick Read.</Text>
               <Text style={styles.body}>A focused signal for the next take—not a verdict.</Text>
               <View accessibilityLabel="Quick Read scores" style={styles.scoreGrid}>
-                <Score label="Clarity" value={result.clarity} />
-                <Score label="Structure" value={result.structure} />
-                <Score label="Specificity" value={result.specificity} />
-                <Score label="Concision" value={result.concision} />
+                <Score label="Clarity" value={currentResult.clarity} />
+                <Score label="Structure" value={currentResult.structure} />
+                <Score label="Specificity" value={currentResult.specificity} />
+                <Score label="Concision" value={currentResult.concision} />
               </View>
-              <FeedbackCard label="ONE STRENGTH" text={result.strength} />
-              <FeedbackCard label="ONE FIX" text={result.improvement} />
-              <FeedbackCard label="NEXT DRILL" text={result.nextDrill} />
+              <FeedbackCard label="ONE STRENGTH" text={currentResult.strength} />
+              <FeedbackCard label="ONE FIX" text={currentResult.improvement} />
+              <FeedbackCard label="NEXT DRILL" text={currentResult.nextDrill} />
               <Text style={styles.retentionNote}>Cloud audio was deleted after analysis. Transcript retention is limited to 30 days.</Text>
               <FlowButton label="Done" onPress={close} />
             </>

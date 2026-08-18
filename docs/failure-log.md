@@ -211,6 +211,7 @@
 - Category: client state/idempotency.
 - Blast radius: a later recording can return an earlier result, bind to the wrong attempt, or fail an idempotency-key ownership check.
 - Guardrail: every distinct recording must receive a fresh server attempt ID and idempotency key; retries of the same take alone may reuse them.
+- Resolution: R0D-D1 now rotates the local take identity and idempotency key, clears the server attempt at retry/delete boundaries, and rejects stale Quick Read results/errors. The deterministic client suite covers same-take reuse, new-take rotation, auth continuity, delete-to-new-recording isolation, and late-result protection.
 
 ## 2026-08-17 — Retry timeout arithmetic can exceed the Edge Function budget
 
