@@ -13,6 +13,11 @@ import {
   type TranscriptionAdapter,
 } from '../_shared/provider-adapters.ts';
 import { nextProviderRetryCount } from '../_shared/retry-policy.ts';
+import {
+  deletionConfirmed,
+  verifyStorageDeletion,
+  type StorageDeletionResult,
+} from '../_shared/storage-deletion.ts';
 
 const AUDIO_BUCKET = 'quick-read-audio';
 const TRANSCRIPTION_MODEL = 'gpt-4o-mini-transcribe';
@@ -252,11 +257,8 @@ async function updateRun(admin: SupabaseClient, runId: string, updates: Record<s
   }
 }
 
-async function deleteAudio(admin: SupabaseClient, path: string) {
-  const { error } = await admin.storage.from(AUDIO_BUCKET).remove([path]);
-  if (error) {
-    throw new CleanupError();
-  }
+async function deleteAudio(admin: SupabaseClient, path: string): Promise<StorageDeletionResult> {
+  return verifyStorageDeletion(admin.storage.from(AUDIO_BUCKET), [path]);
 }
 
 async function recordProviderAttempt(admin: SupabaseClient, runId: string, stage: 'transcription' | 'feedback') {
@@ -272,7 +274,10 @@ async function recordProviderAttempt(admin: SupabaseClient, runId: string, stage
 async function cleanupAudio(admin: SupabaseClient, run: AnalysisRun) {
   const attempts = run.audio_cleanup_attempts;
   try {
-    await deleteAudio(admin, run.audio_object_path);
+    const deletion = await deleteAudio(admin, run.audio_object_path);
+    if (!deletionConfirmed(deletion)) {
+      throw new CleanupError();
+    }
     await updateRun(admin, run.id, {
       audio_cleanup_status: 'deleted',
       audio_cleanup_last_error: null,

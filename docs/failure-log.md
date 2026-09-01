@@ -196,7 +196,8 @@
 - Root cause: the R0D-C harness invoked the cleanup function directly; no production scheduler or monitored recurring invocation is configured in the repository.
 - Category: retention/operations.
 - Blast radius: failed audio and expired transcripts can remain beyond their contractual deadlines if the cleanup function is not invoked.
-- Guardrail: production retention acceptance must prove the scheduler, recurring execution, failure alerting, and bounded object absence for both audio and transcripts.
+- Resolution: D2-A Core retains verified deletion and bounded cleanup locally; the production scheduler and live retention harness are deferred to D2-A Ops.
+- Guardrail: do not claim automatic retention is active; no real-user or paid launch may occur until D2-A Ops, D2-B, and D2-C pass.
 
 ## 2026-08-17 — Database account deletion was treated as Storage deletion proof
 

@@ -1,4 +1,10 @@
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.110.7';
+import {
+  deletionConfirmed,
+  selectExpiredRows,
+  selectOrphanRows,
+  verifyStorageDeletion,
+} from '../_shared/storage-deletion.ts';
 
 const AUDIO_BUCKET = 'quick-read-audio';
 const STALE_RUN_MINUTES = 15;
@@ -12,6 +18,7 @@ type CleanupRun = {
   audio_cleanup_status: 'pending' | 'deleted' | 'failed';
   audio_cleanup_attempts: number;
   transcript_cleanup_status: 'pending' | 'deleted' | 'failed';
+  transcript_cleanup_attempts: number;
   updated_at: string;
 };
 
@@ -37,10 +44,26 @@ async function updateRun(admin: SupabaseClient, runId: string, updates: Record<s
   if (error) throw new Error('cleanup_run_update_failed');
 }
 
+async function nextTranscriptCleanupAttempt(admin: SupabaseClient, runId: string) {
+  const { data, error } = await admin
+    .from('analysis_runs')
+    .select('transcript_cleanup_attempts')
+    .eq('id', runId)
+    .maybeSingle();
+  if (error) throw new Error('cleanup_run_lookup_failed');
+  return Number(data?.transcript_cleanup_attempts ?? 0) + 1;
+}
+
 async function removeAudio(admin: SupabaseClient, run: CleanupRun) {
   const attempts = run.audio_cleanup_attempts + 1;
   try {
-    await admin.storage.from(AUDIO_BUCKET).remove([run.audio_object_path]);
+    const deletion = await verifyStorageDeletion(
+      admin.storage.from(AUDIO_BUCKET),
+      [run.audio_object_path],
+    );
+    if (!deletionConfirmed(deletion)) {
+      throw new Error('audio_cleanup_unverified');
+    }
     await updateRun(admin, run.id, {
       audio_cleanup_status: 'deleted',
       audio_cleanup_attempts: attempts,
@@ -92,11 +115,21 @@ async function cleanExpiredAudio(admin: SupabaseClient) {
     .from('analysis_runs')
     .select('id,status,safe_error_code,audio_object_path,audio_expires_at,audio_cleanup_status,audio_cleanup_attempts,transcript_cleanup_status,updated_at')
     .lte('audio_expires_at', now)
-    .neq('audio_cleanup_status', 'deleted');
+    .neq('audio_cleanup_status', 'deleted')
+    .order('audio_expires_at', { ascending: true })
+    .order('id', { ascending: true })
+    .limit(50);
   if (error) throw new Error('expired_audio_lookup_failed');
   let deleted = 0;
   let failed = 0;
-  for (const run of (data ?? []) as CleanupRun[]) {
+  const rows = selectExpiredRows(
+    (data ?? []).map((run) => ({
+      ...(run as CleanupRun),
+      expiresAt: run.audio_expires_at,
+    })),
+    now,
+  );
+  for (const run of rows as CleanupRun[]) {
     if (await expireAudioRun(admin, run)) deleted += 1;
     else failed += 1;
   }
@@ -107,28 +140,41 @@ async function cleanExpiredTranscripts(admin: SupabaseClient) {
   const now = new Date().toISOString();
   const { data, error } = await admin
     .from('analysis_transcripts')
-    .select('run_id')
-    .lte('transcript_expires_at', now);
+    .select('run_id,transcript_expires_at')
+    .lte('transcript_expires_at', now)
+    .order('transcript_expires_at', { ascending: true })
+    .order('run_id', { ascending: true })
+    .limit(50);
   if (error) throw new Error('expired_transcript_lookup_failed');
   let deleted = 0;
   let failed = 0;
-  for (const transcript of data ?? []) {
+  const transcripts = selectExpiredRows(
+    (data ?? []).map((transcript) => ({
+      id: transcript.run_id,
+      expiresAt: transcript.transcript_expires_at,
+      runId: transcript.run_id,
+    })),
+    now,
+  );
+  for (const transcript of transcripts) {
+    const attempts = await nextTranscriptCleanupAttempt(admin, transcript.runId);
     const { error: deleteError } = await admin
       .from('analysis_transcripts')
       .delete()
-      .eq('run_id', transcript.run_id);
+      .eq('run_id', transcript.runId);
     if (deleteError) {
       failed += 1;
-      await updateRun(admin, transcript.run_id, {
+      await updateRun(admin, transcript.runId, {
         transcript_cleanup_status: 'failed',
-        transcript_cleanup_attempts: 1,
+        transcript_cleanup_attempts: attempts,
         transcript_cleanup_last_error: 'transcript_cleanup_failed',
         transcript_cleanup_last_error_at: new Date().toISOString(),
       });
     } else {
       deleted += 1;
-      await updateRun(admin, transcript.run_id, {
+      await updateRun(admin, transcript.runId, {
         transcript_cleanup_status: 'deleted',
+        transcript_cleanup_attempts: attempts,
         transcript_deleted_at: new Date().toISOString(),
         transcript_cleanup_last_error: null,
         transcript_cleanup_last_error_at: null,
@@ -139,16 +185,24 @@ async function cleanExpiredTranscripts(admin: SupabaseClient) {
 }
 
 async function cleanOrphanedStorage(admin: SupabaseClient) {
-  const { data, error } = await admin.rpc('list_orphaned_quick_read_objects');
+  const { data, error } = await admin
+    .rpc('list_orphaned_quick_read_objects')
+    .order('object_path', { ascending: true })
+    .limit(50);
   if (error) throw new Error('orphaned_storage_lookup_failed');
-  let deleted = 0;
-  let failed = 0;
-  for (const object of (data ?? []) as Array<{ object_path: string }>) {
-    const { error: deleteError } = await admin.storage.from(AUDIO_BUCKET).remove([object.object_path]);
-    if (deleteError) failed += 1;
-    else deleted += 1;
-  }
-  return { deleted, failed };
+  const paths = selectOrphanRows(
+    (data ?? []).map((object) => ({
+      createdAt: '',
+      path: (object as { object_path: string }).object_path,
+    })),
+  ).map(({ path }) => path);
+  if (paths.length === 0) return { deleted: 0, failed: 0, ambiguous: 0 };
+  const deletion = await verifyStorageDeletion(admin.storage.from(AUDIO_BUCKET), paths);
+  return {
+    deleted: deletion.paths.filter(({ status }) => status === 'deleted' || status === 'already_absent').length,
+    failed: deletion.paths.filter(({ status }) => status === 'failed').length,
+    ambiguous: deletion.paths.filter(({ status }) => status === 'ambiguous').length,
+  };
 }
 
 async function handler(request: Request) {

@@ -149,6 +149,11 @@ enabled = true
 max_buckets = 10
 max_indexes = 5
 
+# The cleanup function authenticates every request with its dedicated header
+# secret; it does not use a user JWT or service-role key.
+[functions.quick-read-cleanup]
+verify_jwt = false
+
 # Vector Buckets is available to Supabase Pro plan.
 # [storage.vector.buckets.documents-openai]
 

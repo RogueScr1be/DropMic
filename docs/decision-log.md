@@ -293,3 +293,19 @@ The gates reduce parallelism and delay commerce, but they protect user data and 
 ### Refactor trigger
 
 Replan only after both gates have evidence-backed acceptance criteria and results.
+
+## 2026-08-17 — Separate core cleanup hardening from production retention operations
+
+### Decision
+
+R0D-D2A Core keeps the existing `quick-read-cleanup` Edge Function as a bounded, deterministic cleanup path and uses the shared Storage verifier for exact-path deletion evidence. Successful Quick Read analysis cannot complete until audio is deleted or metadata-confirmed absent. Expired audio, expired transcripts, and orphaned Storage objects are processed in bounded batches with stable ordering; transcripts are deleted without removing durable results or metrics.
+
+The deployed function authentication contract remains represented in `supabase/config.toml`: `quick-read-cleanup` uses its dedicated header secret with the platform JWT pre-check disabled. No scheduler credentials or Vault values are added to the repository.
+
+### Deferred D2-A Ops
+
+The 24-hour failed-audio and 30-day transcript guarantees are not automatically enforced yet. Supabase Cron/`pg_cron`, `pg_net`, Vault provisioning, schedule observability, and full synthetic live-retention acceptance are deferred until immediately before external testing. Current Edge secret values are unknown and must be coordinated in that later gate; no real-user or paid launch may occur until D2-A Ops, D2-B, and D2-C pass.
+
+### Refactor trigger
+
+Return to D2-A Ops once the product is ready for external testing. Keep the scheduler, Vault, and live acceptance work separate from Premium and from feature construction.
