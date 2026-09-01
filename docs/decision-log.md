@@ -309,3 +309,37 @@ The 24-hour failed-audio and 30-day transcript guarantees are not automatically 
 ### Refactor trigger
 
 Return to D2-A Ops once the product is ready for external testing. Keep the scheduler, Vault, and live acceptance work separate from Premium and from feature construction.
+
+## 2026-09-01 — Establish the R0F-B Plus entitlement authority boundary
+
+### Decision
+
+Select RevenueCat as the future iOS-first purchase provider, behind a narrow
+provider adapter. R0F-B adds only the server-owned
+`public.billing_entitlements` current-state table for the single `plus`
+entitlement. It does not install RevenueCat, expose a paywall, add purchases or
+webhooks, or make paid access live. The stable Supabase `auth.users.id` remains
+the future purchase identity, and server-side authorization must resolve from
+this state rather than client entitlement state.
+
+### Alternatives considered
+
+- Install the purchase SDK and build the paywall before the Free foundation and
+  Premium value proof are ready.
+- Add a generic commerce schema or webhook-event ledger before either has a real
+  consumer.
+- Trust RevenueCat client state as the authorization boundary.
+
+### Tradeoffs
+
+One current-state row keeps the first server boundary small and reversible. It
+does not yet provide purchase synchronization, event idempotency, refunds, or
+restore behavior; those belong to the later adapter/webhook phase. RevenueCat's
+planned cost remains zero until provider usage begins under the accepted pricing
+assumption (free through $2,500 monthly tracked revenue, then 1%).
+
+### Refactor trigger
+
+Add the webhook event ledger only when webhook handling is implemented. Do not
+expose a paywall until Free Gate B and the server-gated Take Two capability are
+accepted.

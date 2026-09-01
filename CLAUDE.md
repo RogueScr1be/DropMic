@@ -66,4 +66,5 @@
 - Account deletion is incomplete until database rows and Storage objects are independently verified absent.
 - Persistent coaching may store derived signals but cannot extend raw-audio or transcript retention.
 - Paid provider access must be enforced server-side; cached client entitlements are display-only.
-- Do not begin R0F until the lifecycle-repair and minimum-Free gates are accepted.
+- Keep RevenueCat behind a narrow provider adapter; do not install or store-wire it before a real Premium capability and the Free Gate B foundation are accepted.
+- Do not expose paid access or begin purchase/paywall R0F phases until the lifecycle-repair and minimum-Free gates are accepted; the non-live entitlement-authority foundation may be built earlier.
