@@ -68,3 +68,4 @@
 - Paid provider access must be enforced server-side; cached client entitlements are display-only.
 - Keep RevenueCat behind a narrow provider adapter; do not install or store-wire it before a real Premium capability and the Free Gate B foundation are accepted.
 - Do not expose paid access or begin purchase/paywall R0F phases until the lifecycle-repair and minimum-Free gates are accepted; the non-live entitlement-authority foundation may be built earlier.
+- Take Two must derive owner identity from the verified JWT, match runs through stored `attempts.topic_id`, and compare only durable results/metrics without provider calls or database writes.

@@ -343,3 +343,35 @@ assumption (free through $2,500 monthly tracked revenue, then 1%).
 Add the webhook event ledger only when webhook handling is implemented. Do not
 expose a paywall until Free Gate B and the server-gated Take Two capability are
 accepted.
+
+## 2026-09-01 — Define the R0F-C server-gated Take Two capability
+
+### Decision
+
+Take Two is implemented first as a local-only, read-only Edge Function behind
+the R0F-B server-authoritative Plus resolver. It authenticates with the
+verified Supabase user, uses `attempts.topic_id` as the existing stored prompt
+identity, reads only durable results and metrics, and returns canonical
+baseline/follow-up snapshots with raw deltas. It makes no AI/provider calls,
+Storage or transcript reads, or database writes.
+
+### Alternatives considered
+
+- Accept client-supplied owner, prompt, entitlement, metric, or comparison data.
+- Compare runs by request order or invent a directional improvement score.
+- Add a comparison table before the existing attempt/run identity can prove
+  same-prompt membership.
+
+### Tradeoffs
+
+Using the existing attempt-to-topic relationship keeps the phase schema-free
+and reversible, while requiring complete durable result/metric state means
+malformed or partial runs return `comparison_unavailable`. This proves the
+Premium value boundary locally but does not expose paid access until live
+authorization, deployment, and Take Two acceptance run together.
+
+### Refactor trigger
+
+Revisit the comparison contract only if the stored prompt identity or metric
+semantics change. Keep RevenueCat purchase plumbing, restore/refund handling,
+and UI after the combined R0F-B2/R0F-C live gate.
