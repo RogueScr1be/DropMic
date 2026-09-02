@@ -69,3 +69,4 @@
 - Keep RevenueCat behind a narrow provider adapter; do not install or store-wire it before a real Premium capability and the Free Gate B foundation are accepted.
 - Do not expose paid access or begin purchase/paywall R0F phases until the lifecycle-repair and minimum-Free gates are accepted; the non-live entitlement-authority foundation may be built earlier.
 - Take Two must derive owner identity from the verified JWT, match runs through stored `attempts.topic_id`, and compare only durable results/metrics without provider calls or database writes.
+- When Supabase project commands authenticate but function commands require a missing profile, use a command-scoped `SUPABASE_ACCESS_TOKEN`; bound and sanitize deployment diagnostics, classify packaging/auth versus upload/server stalls, and never change application code to compensate.
