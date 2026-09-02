@@ -3,6 +3,9 @@ import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-nati
 
 import { isCurrentTake } from './attempt-identity';
 import { startQuickRead } from './quick-read-service';
+import { compareTakeTwo } from './take-two-service';
+import type { TakeTwoComparison } from '../../../supabase/functions/_shared/take-two';
+import { getPlusDisplayEligibility, subscribeToPlusDisplaySession } from '@/features/billing/plus-display';
 import type { QuickReadResult } from '../../../supabase/functions/_shared/quick-read-contract';
 
 type QuickReadStep = 'consent' | 'processing' | 'result' | 'error';
@@ -13,6 +16,9 @@ export function QuickReadFlow({
   audioUri,
   idempotencyKey,
   onClose,
+  onTakeTwo,
+  prompt,
+  takeTwoBaselineRunId = null,
   takeId,
   visible,
 }: {
@@ -21,30 +27,66 @@ export function QuickReadFlow({
   audioUri: string | null;
   idempotencyKey: string;
   onClose: () => void;
+  onTakeTwo?: (baselineRunId: string) => void;
+  prompt?: string;
+  takeTwoBaselineRunId?: string | null;
   takeId: string;
   visible: boolean;
 }) {
   const [step, setStep] = useState<QuickReadStep>('consent');
   const [result, setResult] = useState<QuickReadResult | null>(null);
+  const [runId, setRunId] = useState<string | null>(null);
+  const [comparison, setComparison] = useState<TakeTwoComparison | null>(null);
+  const [comparisonError, setComparisonError] = useState<string | null>(null);
+  const [plusEligible, setPlusEligible] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [stepTakeId, setStepTakeId] = useState(takeId);
   const activeTakeId = useRef(takeId);
   const requestGeneration = useRef(0);
   const runInFlight = useRef(false);
+  const takeTwoInFlight = useRef(false);
+  const onCloseRef = useRef(onClose);
+  const sessionIdentity = useRef<{ initialized: boolean; userId: string | null }>({ initialized: false, userId: null });
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     activeTakeId.current = takeId;
     requestGeneration.current += 1;
     runInFlight.current = false;
+    takeTwoInFlight.current = false;
     return () => {
       requestGeneration.current += 1;
       runInFlight.current = false;
     };
   }, [takeId]);
 
+  useEffect(() => subscribeToPlusDisplaySession((userId) => {
+    if (!sessionIdentity.current.initialized) {
+      sessionIdentity.current = { initialized: true, userId };
+      return;
+    }
+    if (sessionIdentity.current.userId === userId) {
+      return;
+    }
+    sessionIdentity.current = { initialized: true, userId };
+    requestGeneration.current += 1;
+    runInFlight.current = false;
+    takeTwoInFlight.current = false;
+    setPlusEligible(false);
+    setComparison(null);
+    setComparisonError(null);
+    onCloseRef.current();
+  }), []);
+
   const currentStep = stepTakeId === takeId ? step : 'consent';
   const currentResult = stepTakeId === takeId ? result : null;
   const currentError = stepTakeId === takeId ? error : null;
+  const currentRunId = stepTakeId === takeId ? runId : null;
+  const currentComparison = stepTakeId === takeId ? comparison : null;
+  const currentComparisonError = stepTakeId === takeId ? comparisonError : null;
 
   const close = () => {
     requestGeneration.current += 1;
@@ -52,7 +94,11 @@ export function QuickReadFlow({
     setStepTakeId(takeId);
     setStep('consent');
     setResult(null);
+    setRunId(null);
+    setComparison(null);
+    setComparisonError(null);
     setError(null);
+    setPlusEligible(false);
     onClose();
   };
 
@@ -69,6 +115,11 @@ export function QuickReadFlow({
     const requestId = ++requestGeneration.current;
     runInFlight.current = true;
     setStepTakeId(takeId);
+    setResult(null);
+    setRunId(null);
+    setComparison(null);
+    setComparisonError(null);
+    setPlusEligible(false);
     setError(null);
     setStep('processing');
     try {
@@ -83,6 +134,32 @@ export function QuickReadFlow({
       }
       runInFlight.current = false;
       setResult(response.result);
+      setRunId(response.runId);
+      if (takeTwoBaselineRunId) {
+        try {
+          const takeTwo = await compareTakeTwo({ baselineRunId: takeTwoBaselineRunId, followUpRunId: response.runId });
+          if (requestGeneration.current !== requestId || !isCurrentTake(requestTakeId, activeTakeId.current)) {
+            return;
+          }
+          setComparison(takeTwo);
+          setComparisonError(null);
+        } catch (comparisonFailure) {
+          if (requestGeneration.current !== requestId || !isCurrentTake(requestTakeId, activeTakeId.current)) {
+            return;
+          }
+          const message = comparisonFailure instanceof Error
+            ? comparisonFailure.message
+            : 'Take Two could not finish. Your Quick Read is saved.';
+          setComparisonError(message);
+        }
+      } else {
+        const eligibilityRequestId = requestGeneration.current;
+        void getPlusDisplayEligibility().then((eligible) => {
+          if (requestGeneration.current === eligibilityRequestId && isCurrentTake(requestTakeId, activeTakeId.current)) {
+            setPlusEligible(eligible);
+          }
+        });
+      }
       setStep('result');
     } catch (runError) {
       if (requestGeneration.current !== requestId || !isCurrentTake(requestTakeId, activeTakeId.current)) {
@@ -92,6 +169,15 @@ export function QuickReadFlow({
       setError(runError instanceof Error ? runError.message : "Quick Read couldn't finish.");
       setStep('error');
     }
+  };
+
+  const startTakeTwo = () => {
+    if (!currentRunId || !onTakeTwo || takeTwoInFlight.current) {
+      return;
+    }
+    takeTwoInFlight.current = true;
+    requestGeneration.current += 1;
+    onTakeTwo(currentRunId);
   };
 
   return (
@@ -129,7 +215,7 @@ export function QuickReadFlow({
 
           {currentStep === 'error' && (
             <>
-              <Text accessibilityRole="header" style={styles.title}>Quick Read paused safely.</Text>
+              <Text accessibilityLabel="Quick Read paused safely." accessibilityRole="header" style={styles.title}>Quick Read paused safely.</Text>
               <Text style={styles.body}>{currentError ?? "Quick Read couldn't finish."}</Text>
               <FlowButton label="Try Quick Read again" onPress={() => void run()} />
               <FlowButton label="Close" onPress={close} secondary />
@@ -150,12 +236,95 @@ export function QuickReadFlow({
               <FeedbackCard label="ONE FIX" text={currentResult.improvement} />
               <FeedbackCard label="NEXT DRILL" text={currentResult.nextDrill} />
               <Text style={styles.retentionNote}>Cloud audio was deleted after analysis. Transcript retention is limited to 30 days.</Text>
+              {!takeTwoBaselineRunId && plusEligible && currentRunId && (
+                <View accessibilityLabel="Take Two invitation" style={styles.takeTwoCard} testID="take-two-cta">
+                  <Text accessibilityRole="header" style={styles.takeTwoTitle}>Take Two</Text>
+                  <Text style={styles.takeTwoBody}>Try the same prompt again and compare.</Text>
+                  <FlowButton label="Take Two" onPress={startTakeTwo} />
+                </View>
+              )}
+              {takeTwoBaselineRunId && (
+                <TakeTwoComparisonView
+                  comparison={currentComparison}
+                  error={currentComparisonError}
+                  prompt={prompt ?? 'Your original prompt'}
+                />
+              )}
               <FlowButton label="Done" onPress={close} />
             </>
           )}
         </ScrollView>
       </View>
     </Modal>
+  );
+}
+
+function TakeTwoComparisonView({
+  comparison,
+  error,
+  prompt,
+}: {
+  comparison: TakeTwoComparison | null;
+  error: string | null;
+  prompt: string;
+}) {
+  if (error || !comparison) {
+    return (
+      <View accessibilityLabel="Take Two comparison unavailable" style={styles.comparisonNotice}>
+        <Text style={styles.noticeTitle}>Take Two comparison unavailable</Text>
+        <Text accessibilityLiveRegion="polite" style={styles.noticeBody}>{error ?? 'Your completed Quick Read is saved.'}</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View accessibilityLabel="Take Two comparison" style={styles.comparison} testID="take-two-comparison">
+      <Text accessibilityRole="header" style={styles.takeTwoTitle}>Take Two</Text>
+      <Text style={styles.comparisonLabel}>ORIGINAL PROMPT</Text>
+      <Text style={styles.comparisonPrompt}>{prompt}</Text>
+      <View style={styles.takeColumns}>
+        <ComparisonColumn label="First Take" snapshot={comparison.baseline} />
+        <ComparisonColumn label="Second Take" snapshot={comparison.followUp} />
+      </View>
+      <Text style={styles.comparisonLabel}>RAW DELTAS · SECOND − FIRST</Text>
+      <MetricRow label="Clarity" value={comparison.deltas.scores.clarity} />
+      <MetricRow label="Structure" value={comparison.deltas.scores.structure} />
+      <MetricRow label="Specificity" value={comparison.deltas.scores.specificity} />
+      <MetricRow label="Concision" value={comparison.deltas.scores.concision} />
+      <MetricRow label="Words" value={comparison.deltas.metrics.wordCount} />
+      <MetricRow label="Words per minute" value={comparison.deltas.metrics.wordsPerMinute} />
+      <MetricRow label="Filler words" value={comparison.deltas.metrics.fillerWordCount} />
+    </View>
+  );
+}
+
+function ComparisonColumn({
+  label,
+  snapshot,
+}: {
+  label: string;
+  snapshot: TakeTwoComparison['baseline'];
+}) {
+  return (
+    <View accessibilityLabel={`${label} scores and metrics`} style={styles.comparisonColumn}>
+      <Text style={styles.comparisonColumnTitle}>{label}</Text>
+      <MetricRow label="Clarity" value={snapshot.scores.clarity} />
+      <MetricRow label="Structure" value={snapshot.scores.structure} />
+      <MetricRow label="Specificity" value={snapshot.scores.specificity} />
+      <MetricRow label="Concision" value={snapshot.scores.concision} />
+      <MetricRow label="Words" value={snapshot.metrics.wordCount} />
+      <MetricRow label="Words per minute" value={snapshot.metrics.wordsPerMinute} />
+      <MetricRow label="Filler words" value={snapshot.metrics.fillerWordCount} />
+    </View>
+  );
+}
+
+function MetricRow({ label, value }: { label: string; value: number }) {
+  return (
+    <View accessibilityLabel={`${label}: ${value}`} style={styles.metricRow}>
+      <Text style={styles.metricLabel}>{label}</Text>
+      <Text style={styles.metricValue}>{value}</Text>
+    </View>
   );
 }
 
@@ -209,6 +378,19 @@ const styles = StyleSheet.create({
   feedbackLabel: { color: '#e4572e', fontSize: 10, fontWeight: '900', letterSpacing: 1.8 },
   feedbackText: { color: '#18332d', fontFamily: 'Georgia', fontSize: 20, lineHeight: 27 },
   retentionNote: { color: '#799087', fontSize: 12, lineHeight: 18 },
+  takeTwoCard: { backgroundColor: '#e7dccb', borderColor: '#c4b5a2', borderRadius: 14, borderWidth: 1, gap: 10, padding: 16 },
+  takeTwoTitle: { color: '#18332d', fontFamily: 'Georgia', fontSize: 26, fontWeight: '700', lineHeight: 32 },
+  takeTwoBody: { color: '#526c63', fontSize: 15, lineHeight: 22 },
+  comparison: { backgroundColor: '#fffaf2', borderColor: '#c4b5a2', borderRadius: 14, borderWidth: 1, gap: 10, padding: 16 },
+  comparisonNotice: { backgroundColor: '#f8d8ca', borderRadius: 14, gap: 8, padding: 16 },
+  comparisonLabel: { color: '#e4572e', fontSize: 10, fontWeight: '900', letterSpacing: 1.6 },
+  comparisonPrompt: { color: '#18332d', fontFamily: 'Georgia', fontSize: 20, lineHeight: 27 },
+  takeColumns: { flexDirection: 'row', gap: 10 },
+  comparisonColumn: { backgroundColor: '#f4ebdd', borderRadius: 10, flex: 1, gap: 6, padding: 12 },
+  comparisonColumnTitle: { color: '#18332d', fontSize: 14, fontWeight: '900', marginBottom: 3 },
+  metricRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', minHeight: 28 },
+  metricLabel: { color: '#526c63', flexShrink: 1, fontSize: 12 },
+  metricValue: { color: '#18332d', fontSize: 13, fontWeight: '800', marginLeft: 8 },
   button: { alignItems: 'center', backgroundColor: '#e4572e', borderRadius: 12, justifyContent: 'center', minHeight: 54, paddingHorizontal: 16 },
   secondaryButton: { backgroundColor: 'transparent', borderColor: '#b9aa98', borderWidth: 1 },
   buttonText: { color: '#fffaf2', fontSize: 15, fontWeight: '900' },

@@ -310,6 +310,30 @@ The 24-hour failed-audio and 30-day transcript guarantees are not automatically 
 
 Return to D2-A Ops once the product is ready for external testing. Keep the scheduler, Vault, and live acceptance work separate from Premium and from feature construction.
 
+## 2026-09-01 — Build the R0F-D local Take Two client journey
+
+### Decision
+
+Expose Take Two only after a completed Quick Read and a successful,
+display-only Plus entitlement read. The second take reuses the existing
+recording and Quick Read lifecycle, preserving the same topic and duration
+while generating fresh attempt and idempotency identities. The completed
+second result calls the server-gated `take-two` function with only the two run
+IDs and renders raw comparison deltas.
+
+### Boundaries
+
+Free and anonymous users receive no CTA or unfinished paywall. The client
+never authorizes access, changes quota, reads audio/transcripts, or makes
+provider calls. Failed comparison leaves the completed Quick Read available.
+Take Three, history selection, persistence, sharing, purchases, restore, and
+native/live validation remain deferred.
+
+### Refactor trigger
+
+Revisit this flow only when live entitlement authorization and the combined
+R0F-B2/R0F-C deployment gate pass, or when the stored metric contract changes.
+
 ## 2026-09-01 — Establish the R0F-B Plus entitlement authority boundary
 
 ### Decision

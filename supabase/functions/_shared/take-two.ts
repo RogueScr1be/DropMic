@@ -54,7 +54,7 @@ export type TakeTwoDependencies = {
   repository: TakeTwoRepository;
 };
 
-type TakeTwoComparison = {
+export type TakeTwoComparison = {
   baseline: TakeTwoSnapshot;
   followUp: TakeTwoSnapshot;
   deltas: {
@@ -63,7 +63,7 @@ type TakeTwoComparison = {
   };
 };
 
-type TakeTwoSnapshot = {
+export type TakeTwoSnapshot = {
   runId: string;
   attemptId: string;
   createdAt: string;

@@ -11,6 +11,7 @@ import { SplashReveal } from '@/features/first-use/SplashReveal';
 import { useReducedMotion } from '@/features/first-use/use-reduced-motion';
 import { QuickReadFlow } from '@/features/quick-read/QuickReadFlow';
 import { createTakeIdentity, type TakeIdentity } from '@/features/quick-read/attempt-identity';
+import { createTakeTwoTake } from '@/features/quick-read/take-two-journey';
 import { useLocalAudioRecorder } from '@/features/recording/use-local-audio-recorder';
 import {
   deriveElapsedMs,
@@ -54,11 +55,13 @@ export default function AudioProofScreen() {
   const [isQuickReadVisible, setIsQuickReadVisible] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
   const [takeIdentity, setTakeIdentity] = useState<TakeIdentity>(() => createTakeIdentity());
+  const [takeTwoBaselineRunId, setTakeTwoBaselineRunId] = useState<string | null>(null);
   const stopInFlight = useRef(false);
   const startInFlight = useRef(false);
   const operationGeneration = useRef(0);
   const countdownTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const takeIdentityRef = useRef(takeIdentity);
+  const takeTwoStartInFlight = useRef(false);
 
   const isTablet = width >= 700;
   const elapsed = useMemo(
@@ -300,17 +303,40 @@ export default function AudioProofScreen() {
   const chooseNewTopic = useCallback(() => {
     setTopic((currentTopic) => selectNextTopic(currentTopic.id, Date.now() + revealKey + 1));
     setRevealKey((currentKey) => currentKey + 1);
+    setTakeTwoBaselineRunId(null);
     setActionError(null);
     setPhase('topic_reveal');
   }, [revealKey]);
 
-  const beginNewTake = useCallback(() => {
-    const nextTakeIdentity = createTakeIdentity();
+  const beginNewTake = useCallback((comparisonBaselineRunId: string | null = null, nextTakeIdentity = createTakeIdentity()) => {
     takeIdentityRef.current = nextTakeIdentity;
     setTakeIdentity(nextTakeIdentity);
     setServerAttemptId(null);
+    setTakeTwoBaselineRunId(comparisonBaselineRunId);
     setIsQuickReadVisible(false);
   }, []);
+
+  const beginTakeTwo = useCallback((baselineRunId: string) => {
+    if (!baselineRunId || takeTwoStartInFlight.current) {
+      return;
+    }
+    takeTwoStartInFlight.current = true;
+    operationGeneration.current += 1;
+    const previousRecordingUri = recordingUri;
+    const nextTake = createTakeTwoTake({
+      baselineRunId,
+      duration: selectedDurationSeconds,
+      topicId: topic.id,
+    });
+    beginNewTake(baselineRunId, nextTake.identity);
+    dispatch({ type: 'DELETE_RECORDING' });
+    setActionError(null);
+    setPhase('duration_selection');
+    takeTwoStartInFlight.current = false;
+    if (previousRecordingUri) {
+      void audio.deleteRecording(previousRecordingUri).catch(() => undefined);
+    }
+  }, [audio, beginNewTake, dispatch, recordingUri, selectedDurationSeconds, topic.id]);
 
   const retryAttempt = useCallback(async () => {
     try {
@@ -320,9 +346,13 @@ export default function AudioProofScreen() {
       }
       await clearUnclaimedAttempt();
       setRecoveryAttempt(null);
-      beginNewTake();
+      beginNewTake(takeTwoBaselineRunId);
       dispatch({ type: 'RETRY' });
-      chooseNewTopic();
+      if (takeTwoBaselineRunId) {
+        setPhase('duration_selection');
+      } else {
+        chooseNewTopic();
+      }
     } catch (retryError) {
       setActionError(retryError instanceof Error ? retryError.message : 'Unable to retry recording.');
       dispatch({
@@ -330,7 +360,7 @@ export default function AudioProofScreen() {
         message: retryError instanceof Error ? retryError.message : 'Unable to retry recording.',
       });
     }
-  }, [audio, beginNewTake, chooseNewTopic, dispatch, recordingUri]);
+  }, [audio, beginNewTake, chooseNewTopic, dispatch, recordingUri, takeTwoBaselineRunId]);
 
   const deleteAttempt = useCallback(async () => {
     try {
@@ -420,7 +450,12 @@ export default function AudioProofScreen() {
             onPermissionRetry={beginRecording}
             prompt={topic.prompt}
             selectedDuration={selectedDurationSeconds}
-            setDuration={(duration) => dispatch({ type: 'SELECT_DURATION', duration })}
+            locked={Boolean(takeTwoBaselineRunId)}
+            setDuration={(duration) => {
+              if (!takeTwoBaselineRunId) {
+                dispatch({ type: 'SELECT_DURATION', duration });
+              }
+            }}
             topicCategory={topic.category}
           />
         )}
@@ -503,7 +538,15 @@ export default function AudioProofScreen() {
         audioExtension={quickReadAudioExtension(recordingUri)}
         audioUri={recordingUri}
         idempotencyKey={takeIdentity.quickReadIdempotencyKey}
-        onClose={() => setIsQuickReadVisible(false)}
+        onClose={() => {
+          setIsQuickReadVisible(false);
+          if (takeTwoBaselineRunId) {
+            setTakeTwoBaselineRunId(null);
+          }
+        }}
+        onTakeTwo={beginTakeTwo}
+        prompt={topic.prompt}
+        takeTwoBaselineRunId={takeTwoBaselineRunId}
         takeId={takeIdentity.clientAttemptId}
         visible={isQuickReadVisible}
       />
@@ -557,6 +600,7 @@ function TopicReveal({
 function DurationSelection({
   actionError,
   isStarting,
+  locked,
   onBegin,
   onPermissionRetry,
   prompt,
@@ -566,6 +610,7 @@ function DurationSelection({
 }: {
   actionError: string | null;
   isStarting: boolean;
+  locked: boolean;
   onBegin: () => void;
   onPermissionRetry: () => void;
   prompt: string;
@@ -580,13 +625,15 @@ function DurationSelection({
         How much room do you want?
       </Text>
       <PromptCard prompt={prompt} />
+      {locked && <Text style={styles.lockedTakeNote}>TAKE TWO · SAME PROMPT AND CLOCK</Text>}
       <Text style={styles.label}>SET THE CLOCK</Text>
       <View accessibilityRole="radiogroup" style={styles.durationRow}>
         {RECORDING_DURATIONS.map((duration) => (
           <Pressable
             accessibilityLabel={`${duration} seconds`}
             accessibilityRole="radio"
-            accessibilityState={{ selected: selectedDuration === duration }}
+            accessibilityState={{ disabled: locked, selected: selectedDuration === duration }}
+            disabled={locked}
             key={duration}
             onPress={() => setDuration(duration)}
             style={[styles.durationButton, selectedDuration === duration && styles.durationButtonSelected]}>
@@ -800,6 +847,7 @@ const styles = StyleSheet.create({
   soundToggleOff: { backgroundColor: '#d9cec0' },
   soundToggleText: { color: '#f4ebdd', fontSize: 10, fontWeight: '900', letterSpacing: 1 },
   label: { color: '#799087', fontSize: 11, fontWeight: '900', letterSpacing: 2 },
+  lockedTakeNote: { color: '#e4572e', fontSize: 11, fontWeight: '900', letterSpacing: 1.4 },
   durationRow: { flexDirection: 'row', gap: 10 },
   durationButton: { alignItems: 'center', backgroundColor: '#e7dccb', borderColor: '#c4b5a2', borderRadius: 12, borderWidth: 1, flex: 1, minHeight: 82, justifyContent: 'center' },
   durationButtonSelected: { backgroundColor: '#18332d', borderColor: '#18332d' },
