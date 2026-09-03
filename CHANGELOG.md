@@ -4,6 +4,8 @@
 
 ### Changed
 
+- Added the iOS-only R0F-F1 RevenueCat Test Store identity foundation using
+  the permanent Supabase UUID; purchases and paid access remain deferred.
 - Added the R0F-B server-authoritative Plus entitlement foundation without a
   purchase SDK, paywall, webhook ledger, or live paid access.
 - Added the local-only, read-only R0F-C Take Two server capability; deployment

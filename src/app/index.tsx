@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { SignupFlow } from '@/features/auth/SignupFlow';
 import { clearUnclaimedAttempt, getUnclaimedAttempt, saveUnclaimedAttempt, type UnclaimedAttempt } from '@/features/auth/auth-recovery';
 import { claimUnclaimedAttempt, getSession } from '@/features/auth/auth-service';
+import { bindRevenueCatSession } from '@/features/billing/revenuecat-session';
 import { PREPARATION_COUNTDOWN_MS, formatCountdownNumber, formatSpeakingTime, phaseForRecordingState, type FirstUsePhase } from '@/features/first-use/first-use-flow';
 import { SplashReveal } from '@/features/first-use/SplashReveal';
 import { useReducedMotion } from '@/features/first-use/use-reduced-motion';
@@ -98,6 +99,10 @@ export default function AudioProofScreen() {
   useEffect(() => {
     void getUnclaimedAttempt().then(setRecoveryAttempt);
   }, [refreshRecoveryAttempt]);
+
+  useEffect(() => {
+    return bindRevenueCatSession();
+  }, []);
 
   useEffect(() => {
     if (!currentAttempt) {

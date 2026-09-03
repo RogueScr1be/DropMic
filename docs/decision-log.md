@@ -334,6 +334,30 @@ native/live validation remain deferred.
 Revisit this flow only when live entitlement authorization and the combined
 R0F-B2/R0F-C deployment gate pass, or when the stored metric contract changes.
 
+## 2026-09-02 — Constrain R0F-F1 to identified RevenueCat Test Store setup
+
+### Decision
+
+R0F-F1 uses RevenueCat's iOS Test Store and an Expo development build before
+any App Store Connect or Apple Sandbox setup. The registered iOS bundle
+identifier is `com.prentisswhitley.dropmic`. The client uses only the core
+RevenueCat SDK behind a narrow adapter; `react-native-purchases-ui` is not
+installed, and no purchase entry point is exposed in this phase.
+
+The adapter configures RevenueCat at most once per native process, and only
+with the permanent Supabase `auth.users.id` as the App User ID. Anonymous and
+signed-out sessions remain billing-unavailable. Switching permanent users uses
+`logIn(newUserId)` directly; the adapter never calls RevenueCat `logOut()`
+because that creates an anonymous provider identity. Sign-out clears only
+app-owned billing availability.
+
+### Deferred
+
+Purchases, restore, paywall UI, server reconciliation, webhook lifecycle
+handling, provider-first account deletion, App Store Connect, Apple Sandbox,
+Android, web billing, Packs, schema changes, and a generic commerce abstraction
+remain deferred to the subsequent R0F-F phases.
+
 ## 2026-09-01 — Establish the R0F-B Plus entitlement authority boundary
 
 ### Decision
