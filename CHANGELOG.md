@@ -4,6 +4,8 @@
 
 ### Changed
 
+- Added the local-only R0F-B1A server-authoritative Mic Flow completion and
+  state foundation; offline and unowned recordings receive no Flow credit.
 - Added the iOS-only R0F-F1 RevenueCat Test Store identity foundation using
   the permanent Supabase UUID; purchases and paid access remain deferred.
 - Added the R0F-B server-authoritative Plus entitlement foundation without a

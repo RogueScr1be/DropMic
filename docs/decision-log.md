@@ -176,7 +176,7 @@ Move deletion to a reviewed Edge Function only if the target Supabase deployment
 
 ### Decision
 
-The complete R0E contract is recorded in [notes/r0e-monetization-contract.md](/Users/thewhitley/MicDrop/notes/r0e-monetization-contract.md). DropMic Free, DropMic Plus, and permanent Skill Packs remain economically separate. Plus does not grant Packs, and Pack ownership does not grant Plus.
+The complete R0E contract is recorded in [notes/r0e-monetization-contract.md](../notes/r0e-monetization-contract.md). DropMic Free, DropMic Plus, and permanent Skill Packs remain economically separate. Plus does not grant Packs, and Pack ownership does not grant Plus.
 
 R0F Purchase Foundation is blocked until the core lifecycle production-repair gate and the minimum Free-product gate are accepted. The August 31 paid-release target is withdrawn pending evidence-based replanning.
 
@@ -423,3 +423,40 @@ authorization, deployment, and Take Two acceptance run together.
 Revisit the comparison contract only if the stored prompt identity or metric
 semantics change. Keep RevenueCat purchase plumbing, restore/refund handling,
 and UI after the combined R0F-B2/R0F-C live gate.
+
+## 2026-09-03 — Add the R0F-B1A Mic Flow completion authority
+
+### Decision
+
+Mic Flow uses one metadata-only qualifying-completion source and one
+server-owned state row. The client attempts an anonymous Supabase session before
+recording but never blocks local recording on connectivity. Only a completion
+accepted by `record_mic_flow_completion` qualifies; the RPC derives ownership
+from `auth.uid()`, validates the mode and IANA timezone, calculates the local
+day, and owns Flow, best-Flow, Save, and milestone calculations.
+
+### Alternatives considered
+
+- Credit local or offline recordings before a trusted owner exists.
+- Add an offline mutation queue or a client-owned Flow counter.
+- Add cron, sharing, badges, XP, analytics infrastructure, or a separate
+  commerce abstraction.
+
+### Tradeoffs
+
+The first completion may remain uncredited when session creation fails, which is
+the explicit privacy and authority tradeoff. Reusing the stable local
+completion identity makes RPC retries idempotent without changing R0D-D1's
+fresh identity rule for a new recording retry. Completion time is assigned by
+the database, and timezone transitions require a later server timestamp in
+both the old and new timezone. A one-day gap requires an explicit Save choice;
+the server never consumes a Save automatically. The client captures a trusted
+session identity ephemerally and invalidates it on sign-out or account switch.
+The current first-use prompt is represented as `cold_take`; named mode UI and
+content remain a later Free Gate B phase.
+
+### Refactor trigger
+
+Revisit only if the supported mode taxonomy, timezone semantics, or
+server-owned completion source changes. Do not add offline synchronization
+without a separate ownership and replay contract.
