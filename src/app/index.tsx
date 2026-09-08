@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AppState, Animated, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { AppState, Animated, Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -9,10 +9,14 @@ import { claimUnclaimedAttempt, getSession } from '@/features/auth/auth-service'
 import { isSupabaseConfigured, supabase } from '@/features/auth/auth-client';
 import {
   establishAnonymousMicFlowSession,
+  createMicFlowSnapshotCoordinator,
+  getMicFlowOwnerId,
   recordMicFlowCompletion,
   type MicFlowCompletion,
   type MicFlowRecordingIdentity,
+  type MicFlowSnapshot,
 } from '@/features/mic-flow/mic-flow-service';
+import { MicFlowCard } from '@/features/mic-flow/MicFlowCard';
 import { bindRevenueCatSession } from '@/features/billing/revenuecat-session';
 import { PREPARATION_COUNTDOWN_MS, formatCountdownNumber, formatSpeakingTime, phaseForRecordingState, type FirstUsePhase } from '@/features/first-use/first-use-flow';
 import { SplashReveal } from '@/features/first-use/SplashReveal';
@@ -65,6 +69,10 @@ export default function AudioProofScreen() {
   const [takeIdentity, setTakeIdentity] = useState<TakeIdentity>(() => createTakeIdentity());
   const [takeTwoBaselineRunId, setTakeTwoBaselineRunId] = useState<string | null>(null);
   const [micFlowStatus, setMicFlowStatus] = useState<'idle' | 'pending' | 'protected' | 'unprotected' | 'save_decision_required'>('idle');
+  const [micFlowSnapshot, setMicFlowSnapshot] = useState<MicFlowSnapshot | null>(null);
+  const [micFlowSnapshotLoading, setMicFlowSnapshotLoading] = useState(false);
+  const [micFlowSavePromptVisible, setMicFlowSavePromptVisible] = useState(false);
+  const [micFlowCompletionMessage, setMicFlowCompletionMessage] = useState<string | null>(null);
   const stopInFlight = useRef(false);
   const startInFlight = useRef(false);
   const operationGeneration = useRef(0);
@@ -76,6 +84,8 @@ export default function AudioProofScreen() {
   const micFlowIdentityGenerationRef = useRef(0);
   const pendingMicFlowCompletionRef = useRef<{ input: MicFlowCompletion; identity: MicFlowRecordingIdentity; generation: number } | null>(null);
   const micFlowDecisionInFlight = useRef(false);
+  const micFlowSnapshotRequestRef = useRef(0);
+  const micFlowSnapshotCoordinatorRef = useRef(createMicFlowSnapshotCoordinator());
 
   const isTablet = width >= 700;
   const elapsed = useMemo(
@@ -109,6 +119,44 @@ export default function AudioProofScreen() {
     setRecoveryAttempt(await getUnclaimedAttempt());
   }, []);
 
+  const refreshMicFlowSnapshot = useCallback(async (options?: { force?: boolean; ownerId?: string | null }) => {
+    const requestId = ++micFlowSnapshotRequestRef.current;
+    setMicFlowSnapshotLoading(true);
+    const ownerId = options && Object.prototype.hasOwnProperty.call(options, 'ownerId')
+      ? options.ownerId ?? null
+      : await getMicFlowOwnerId();
+    if (!ownerId) {
+      micFlowSnapshotCoordinatorRef.current.invalidate();
+      if (requestId === micFlowSnapshotRequestRef.current) {
+        setMicFlowSnapshot(null);
+        setMicFlowSnapshotLoading(false);
+      }
+      return;
+    }
+    const snapshot = await micFlowSnapshotCoordinatorRef.current.refresh(ownerId, { force: options?.force });
+    if (requestId !== micFlowSnapshotRequestRef.current) {
+      return;
+    }
+    setMicFlowSnapshot(snapshot);
+    setMicFlowSnapshotLoading(false);
+  }, []);
+
+  const handleMicFlowAuthTransition = useCallback((session: Awaited<ReturnType<typeof getSession>>) => {
+    const nextOwnerId = session?.user?.id ?? null;
+    const captured = micFlowIdentityRef.current;
+    micFlowIdentityGenerationRef.current += 1;
+    micFlowIdentityRef.current = null;
+    pendingMicFlowCompletionRef.current = null;
+    micFlowSnapshotCoordinatorRef.current.transition(nextOwnerId);
+    micFlowSnapshotRequestRef.current += 1;
+    setMicFlowSnapshot(null);
+    setMicFlowSnapshotLoading(Boolean(nextOwnerId));
+    setMicFlowCompletionMessage(null);
+    if (captured && captured.userId !== nextOwnerId) {
+      setMicFlowStatus('unprotected');
+    }
+  }, []);
+
   useEffect(() => {
     void getUnclaimedAttempt().then(setRecoveryAttempt);
   }, [refreshRecoveryAttempt]);
@@ -118,10 +166,16 @@ export default function AudioProofScreen() {
   }, []);
 
   useEffect(() => {
+    const refreshTimer = setTimeout(() => void refreshMicFlowSnapshot(), 0);
+    return () => clearTimeout(refreshTimer);
+  }, [refreshMicFlowSnapshot]);
+
+  useEffect(() => {
     return () => {
       micFlowIdentityGenerationRef.current += 1;
       micFlowIdentityRef.current = null;
       pendingMicFlowCompletionRef.current = null;
+      micFlowSnapshotRequestRef.current += 1;
     };
   }, []);
 
@@ -130,18 +184,24 @@ export default function AudioProofScreen() {
       return;
     }
     const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-      const captured = micFlowIdentityRef.current;
-      if (captured && session?.user?.id !== captured.userId) {
-        micFlowIdentityGenerationRef.current += 1;
-        micFlowIdentityRef.current = null;
-        pendingMicFlowCompletionRef.current = null;
-        if (micFlowCompletionRef.current === takeIdentityRef.current.clientAttemptId) {
-          setMicFlowStatus('unprotected');
-        }
+      handleMicFlowAuthTransition(session);
+      if (session?.user) {
+        void refreshMicFlowSnapshot({ ownerId: session.user.id });
+      } else {
+        setMicFlowSnapshotLoading(false);
       }
     });
     return () => data.subscription.unsubscribe();
-  }, []);
+  }, [handleMicFlowAuthTransition, refreshMicFlowSnapshot]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        void refreshMicFlowSnapshot();
+      }
+    });
+    return () => subscription.remove();
+  }, [refreshMicFlowSnapshot]);
 
   const submitMicFlowCompletion = useCallback(async (useSave: boolean | null) => {
     const pending = pendingMicFlowCompletionRef.current;
@@ -161,17 +221,29 @@ export default function AudioProofScreen() {
       }
       if (result.status === 'save_decision_required') {
         setMicFlowStatus('save_decision_required');
+        setMicFlowSavePromptVisible(true);
+        setMicFlowCompletionMessage(null);
       } else if (result.status === 'credited' || result.status === 'already_credited' || result.status === 'same_day') {
         setMicFlowStatus('protected');
+        setMicFlowSavePromptVisible(false);
+        setMicFlowCompletionMessage(result.status === 'credited' ? 'Mic Flow protected.' : 'Today’s Mic Flow is already protected.');
+        void refreshMicFlowSnapshot({ force: true, ownerId: pending.identity.userId });
       } else if (result.status === 'unavailable' && (result.reason === 'not_configured' || result.reason === 'unowned' || result.reason === 'stale_identity')) {
         setMicFlowStatus('unprotected');
+        setMicFlowSavePromptVisible(false);
+        setMicFlowCompletionMessage(null);
+      } else if (result.status === 'unavailable' && useSave !== null) {
+        setMicFlowStatus('save_decision_required');
+        setMicFlowSavePromptVisible(true);
+        setMicFlowCompletionMessage(null);
       } else {
         setMicFlowStatus('idle');
+        setMicFlowCompletionMessage(null);
       }
     } finally {
       micFlowDecisionInFlight.current = false;
     }
-  }, []);
+  }, [refreshMicFlowSnapshot]);
 
   useEffect(() => {
     if (!currentAttempt) {
@@ -328,14 +400,17 @@ export default function AudioProofScreen() {
     startInFlight.current = true;
     setIsStarting(true);
     setActionError(null);
-    const identityGeneration = ++micFlowIdentityGenerationRef.current;
+    ++micFlowIdentityGenerationRef.current;
     micFlowIdentityRef.current = null;
     pendingMicFlowCompletionRef.current = null;
     const identity = await establishAnonymousMicFlowSession({
-      isCurrent: () => identityGeneration === micFlowIdentityGenerationRef.current,
+      isCurrent: () => operationId === operationGeneration.current,
     });
-    if (identityGeneration === micFlowIdentityGenerationRef.current && identity) {
-      micFlowIdentityRef.current = identity;
+    if (operationId === operationGeneration.current && identity) {
+      const currentOwnerId = await getMicFlowOwnerId();
+      if (operationId === operationGeneration.current && currentOwnerId === identity.userId) {
+        micFlowIdentityRef.current = identity;
+      }
     }
     dispatch({ type: 'REQUEST_PERMISSION' });
 
@@ -408,6 +483,7 @@ export default function AudioProofScreen() {
     micFlowIdentityRef.current = null;
     pendingMicFlowCompletionRef.current = null;
     micFlowCompletionRef.current = null;
+    setMicFlowCompletionMessage(null);
     setTopic((currentTopic) => selectNextTopic(currentTopic.id, Date.now() + revealKey + 1));
     setRevealKey((currentKey) => currentKey + 1);
     setTakeTwoBaselineRunId(null);
@@ -420,12 +496,14 @@ export default function AudioProofScreen() {
     micFlowIdentityRef.current = null;
     pendingMicFlowCompletionRef.current = null;
     micFlowCompletionRef.current = null;
+    setMicFlowCompletionMessage(null);
     takeIdentityRef.current = nextTakeIdentity;
     setTakeIdentity(nextTakeIdentity);
     setServerAttemptId(null);
     setTakeTwoBaselineRunId(comparisonBaselineRunId);
     setIsQuickReadVisible(false);
     setMicFlowStatus('idle');
+    setMicFlowSavePromptVisible(false);
   }, []);
 
   const beginTakeTwo = useCallback((baselineRunId: string) => {
@@ -536,6 +614,10 @@ export default function AudioProofScreen() {
           <Text style={styles.sessionMark}>R0B / LOCAL TAKE</Text>
         </View>
 
+        {displayedPhase !== 'recording' && displayedPhase !== 'countdown' && (
+          <MicFlowCard loading={micFlowSnapshotLoading} snapshot={micFlowSnapshot} />
+        )}
+
         {recoveryAttempt && displayedPhase !== 'completion' && (
           <View style={styles.recoveryBanner}>
             <Text style={styles.recoveryBannerText}>You have a completed local take ready to claim.</Text>
@@ -618,6 +700,8 @@ export default function AudioProofScreen() {
           <CompletionView
             completedAtMs={completedAtMs}
             elapsed={elapsedMs}
+            micFlowCompletionMessage={micFlowCompletionMessage}
+            micFlowSavePromptVisible={micFlowSavePromptVisible}
             micFlowStatus={micFlowStatus}
             onMicFlowSaveDecision={(useSave) => void submitMicFlowCompletion(useSave)}
             onDelete={() => void deleteAttempt()}
@@ -644,9 +728,9 @@ export default function AudioProofScreen() {
           void refreshRecoveryAttempt();
         }}
         onSignedOut={() => {
-          micFlowIdentityGenerationRef.current += 1;
-          micFlowIdentityRef.current = null;
-          pendingMicFlowCompletionRef.current = null;
+          handleMicFlowAuthTransition(null);
+          setMicFlowSnapshotLoading(false);
+          setMicFlowSavePromptVisible(false);
           setMicFlowStatus('unprotected');
           setActionError('Signed out. Your local recording remains on this device.');
         }}
@@ -824,6 +908,8 @@ function RecordingView({
 function CompletionView({
   completedAtMs,
   elapsed,
+  micFlowCompletionMessage,
+  micFlowSavePromptVisible,
   micFlowStatus,
   onMicFlowSaveDecision,
   onDelete,
@@ -837,6 +923,8 @@ function CompletionView({
 }: {
   completedAtMs: number | null;
   elapsed: number;
+  micFlowCompletionMessage: string | null;
+  micFlowSavePromptVisible: boolean;
   micFlowStatus: 'idle' | 'pending' | 'protected' | 'unprotected' | 'save_decision_required';
   onMicFlowSaveDecision: (useSave: boolean) => void;
   onDelete: () => void;
@@ -849,31 +937,56 @@ function CompletionView({
   selectedDuration: RecordingDuration;
 }) {
   return (
-    <View style={styles.section}>
-      <CompletionMark reducedMotion={reducedMotion} />
-      <Text accessibilityRole="header" style={styles.heroTitle}>That’s a take.</Text>
-      <Text style={styles.completionMeta}>{formatSpeakingTime(elapsed)} captured · {selectedDuration}s setting</Text>
-      <Text accessibilityElementsHidden style={styles.completionMeta}>Completed at {completedAtMs ?? 'local time'}</Text>
-      {micFlowStatus === 'pending' && <Text accessibilityLiveRegion="polite" style={styles.completionMeta}>Protecting your Mic Flow…</Text>}
-      {micFlowStatus === 'unprotected' && <Text accessibilityLiveRegion="polite" style={styles.errorText}>Connect to protect your Mic Flow.</Text>}
-      {micFlowStatus === 'save_decision_required' && (
-        <View style={styles.inlineNotice}>
-          <Text style={styles.inlineNoticeText}>You missed one day. Use a Mic Save to keep your Flow going?</Text>
-          <ActionButton label="Use a Mic Save" onPress={() => onMicFlowSaveDecision(true)} />
-          <ActionButton label="Skip the Mic Save" onPress={() => onMicFlowSaveDecision(false)} secondary />
-        </View>
-      )}
-      <Text accessibilityElementsHidden style={styles.recordingMetadata} testID="recording-uri">{recordingUri}</Text>
-      <PromptCard prompt={prompt} />
-      <View style={styles.actionStack}>
-        <ActionButton label="Play recording" onPress={onPlay} />
-        <ActionButton label="Get a Quick Read" onPress={onQuickRead} secondary />
-        <View style={styles.secondaryRow}>
-          <ActionButton compact label="Retry recording" onPress={onRetry} secondary />
-          <ActionButton compact label="Delete recording" onPress={onDelete} secondary />
+    <>
+      <View style={styles.section}>
+        <CompletionMark reducedMotion={reducedMotion} />
+        <Text accessibilityRole="header" style={styles.heroTitle}>That’s a take.</Text>
+        <Text style={styles.completionMeta}>{formatSpeakingTime(elapsed)} captured · {selectedDuration}s setting</Text>
+        <Text accessibilityElementsHidden style={styles.completionMeta}>Completed at {completedAtMs ?? 'local time'}</Text>
+        {micFlowStatus === 'pending' && !micFlowSavePromptVisible && <Text accessibilityLiveRegion="polite" style={styles.completionMeta}>Protecting your Mic Flow…</Text>}
+        {micFlowCompletionMessage && <Text accessibilityLiveRegion="polite" style={styles.completionMeta}>{micFlowCompletionMessage}</Text>}
+        {micFlowStatus === 'unprotected' && <Text accessibilityLiveRegion="polite" style={styles.errorText}>Connect to protect your Mic Flow.</Text>}
+        <Text accessibilityElementsHidden style={styles.recordingMetadata} testID="recording-uri">{recordingUri}</Text>
+        <PromptCard prompt={prompt} />
+        <View style={styles.actionStack}>
+          <ActionButton label="Play recording" onPress={onPlay} />
+          <ActionButton label="Get a Quick Read" onPress={onQuickRead} secondary />
+          <View style={styles.secondaryRow}>
+            <ActionButton compact label="Retry recording" onPress={onRetry} secondary />
+            <ActionButton compact label="Delete recording" onPress={onDelete} secondary />
+          </View>
         </View>
       </View>
-    </View>
+      <MicFlowSavePrompt
+        disabled={micFlowStatus === 'pending'}
+        onDecision={onMicFlowSaveDecision}
+        visible={micFlowSavePromptVisible}
+      />
+    </>
+  );
+}
+
+function MicFlowSavePrompt({
+  disabled,
+  onDecision,
+  visible,
+}: {
+  disabled: boolean;
+  onDecision: (useSave: boolean) => void;
+  visible: boolean;
+}) {
+  return (
+    <Modal accessibilityViewIsModal animationType="slide" onRequestClose={() => undefined} transparent visible={visible}>
+      <View style={styles.savePromptBackdrop}>
+        <View accessibilityLabel="Mic Save decision" style={styles.savePromptSheet}>
+          <Text style={styles.eyebrow}>MIC SAVE</Text>
+          <Text accessibilityRole="header" style={styles.savePromptTitle}>You missed yesterday.</Text>
+          <Text style={styles.savePromptBody}>Use a Mic Save to protect your Flow?</Text>
+          <ActionButton disabled={disabled} label={disabled ? 'Protecting your Flow…' : 'Use Mic Save'} onPress={() => onDecision(true)} />
+          <ActionButton disabled={disabled} label="Continue without Save" onPress={() => onDecision(false)} secondary />
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -1016,4 +1129,8 @@ const styles = StyleSheet.create({
   recordingMetadata: { height: 0, opacity: 0, width: 0 },
   recoveryBanner: { backgroundColor: '#e7dccb', borderRadius: 14, gap: 10, padding: 14 },
   recoveryBannerText: { color: '#18332d', fontSize: 14, lineHeight: 20 },
+  savePromptBackdrop: { backgroundColor: 'rgba(24, 51, 45, 0.58)', flex: 1, justifyContent: 'flex-end' },
+  savePromptSheet: { backgroundColor: '#fffaf2', borderTopLeftRadius: 24, borderTopRightRadius: 24, gap: 14, padding: 24, paddingBottom: 42 },
+  savePromptTitle: { color: '#18332d', fontFamily: 'Georgia', fontSize: 30, fontWeight: '700', lineHeight: 36 },
+  savePromptBody: { color: '#526c63', fontSize: 17, lineHeight: 25 },
 });

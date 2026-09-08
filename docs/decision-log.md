@@ -460,3 +460,64 @@ content remain a later Free Gate B phase.
 Revisit only if the supported mode taxonomy, timezone semantics, or
 server-owned completion source changes. Do not add offline synchronization
 without a separate ownership and replay contract.
+
+## 2026-09-04 — Add the R0F-B1B Basic Mic Flow read model
+
+### Decision
+
+The accepted B1A tables expose authoritative values but not a safe server-time
+display classification. B1B therefore adds one read-only
+`get_mic_flow_snapshot` RPC. It derives ownership from `auth.uid()`, validates
+the current IANA timezone, resolves the existing server-owned Plus state for
+Save capacity, and classifies the owner’s state without writes.
+
+### Tradeoffs
+
+The client can render a compact Mic Flow card for the Free MVP while keeping
+Flow status server-derived. Snapshot failures remain unavailable rather than
+showing fabricated values. Anonymous authenticated users may view their own
+state; recordings still work offline but cannot receive retroactive credit.
+
+### Refactor trigger
+
+Do not add a client-owned Flow cache, offline queue, analytics dashboard, or
+second read table. Revisit the RPC only if the B1A state contract or timezone
+semantics change.
+
+## 2026-09-08 — Validate Mic Flow timezones against PostgreSQL's catalog
+
+### Decision
+
+R0F-B1B's first live run passed 23 of 24 assertions but rejected the valid
+multi-segment timezone `America/Indiana/Indianapolis`. The same one-slash regex
+was present in the B1A completion RPC. Forward migration `20260908000000`
+replaces requested and stored timezone regex checks in both deployed RPCs with
+exact membership in `pg_catalog.pg_timezone_names`. It does not trim,
+normalize, or rewrite timezone values. Previously applied migrations remain
+byte-identical.
+
+### Tradeoffs
+
+PostgreSQL now owns the accepted identifier set, keeping completion and
+snapshot behavior aligned with `AT TIME ZONE`. The repair replaces both full
+function definitions because the original migrations were already deployed;
+their signatures, grants, ownership, volatility, security mode, fixed search
+paths, server time, completion ordering, idempotency, and return contracts are
+preserved. The blast radius is limited to requested and stored timezone
+validation in those two RPCs.
+
+### Acceptance
+
+Two clean local database passes each ran 8 files and 261 assertions. Between
+them, focused repair, B1A, and B1B suites ran 55, 85, and 34 assertions. The
+local-only rollback restored the known rejection in both RPCs; reapplication
+restored `credited` and `protected_today` behavior for the multi-segment zone.
+The complete live matrix then passed 24/24, with 6/6 additional repair proofs.
+Exact synthetic owner cleanup verified zero Auth, profile, preference, Flow,
+entitlement, Storage, attempt, and analysis residue.
+
+### Refactor trigger
+
+Do not add a timezone helper or client-side allowlist. Revisit only if
+PostgreSQL's authoritative timezone semantics change or another database-owned
+identifier requires the same exact-membership policy.

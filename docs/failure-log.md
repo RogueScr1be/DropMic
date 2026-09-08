@@ -1,5 +1,14 @@
 # Failure log
 
+## 2026-09-08 — Catalog-valid multi-segment timezones rejected
+
+- Root cause: a valid structured platform identifier was constrained by an incomplete hand-written regex accepting only one slash. Both Mic Flow RPCs rejected `America/Indiana/Indianapolis`, despite its presence in PostgreSQL's timezone catalog; B1B live acceptance was 23 passed / 1 failed.
+- Category: architecture/validation assumption.
+- Blast radius: requested and stored timezone validation in the completion and snapshot RPCs; owners using affected zones cannot receive normal Flow behavior.
+- Resolution: forward migration `20260908000000` replaces only the two deployed definitions' timezone handling with exact catalog membership. Previously applied migrations remain unchanged. Local rollback restores the exact known-limited definitions for proof only.
+- Local validation caught missing statement terminators when assembling `pg_get_functiondef` output. Both files now terminate each returned definition explicitly; the clean reset must pass before remote deployment.
+- Guardrail: validate PostgreSQL-owned identifiers against PostgreSQL's authoritative catalog and test nontrivial valid values, including multi-segment and catalog-recognized symbolic names. Do not normalize caller identifiers.
+
 ## 2026-07-18 — Expo dependencies were not installed after scaffold
 
 - Symptom: `npx expo install` could not determine the Expo SDK version.

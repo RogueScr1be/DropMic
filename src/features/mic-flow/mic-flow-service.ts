@@ -25,6 +25,30 @@ export type MicFlowState = {
   updated_at: string;
 };
 
+export const MIC_FLOW_SNAPSHOT_STATUSES = [
+  'not_started',
+  'protected_today',
+  'needs_rep_today',
+  'recoverable_with_save',
+  'reset_pending',
+] as const;
+export type MicFlowSnapshotStatus = (typeof MIC_FLOW_SNAPSHOT_STATUSES)[number];
+
+export type MicFlowSnapshot = {
+  status: MicFlowSnapshotStatus;
+  current_flow: number;
+  best_flow: number;
+  saves_available: number;
+  last_qualified_day: string | null;
+  timezone: string | null;
+};
+
+export type MicFlowSnapshotCoordinator = {
+  transition(ownerId: string | null): void;
+  invalidate(): void;
+  refresh(ownerId: string, options?: { force?: boolean }): Promise<MicFlowSnapshot | null>;
+};
+
 export type MicFlowRecordingIdentity = Readonly<{
   userId: string;
   accessToken: string;
@@ -78,6 +102,59 @@ async function bounded<T>(promise: Promise<T>, timeoutMs = SESSION_TIMEOUT_MS): 
   }
 }
 
+export function createMicFlowSnapshotCoordinator(
+  load: (ownerId: string) => Promise<MicFlowSnapshot | null> = async () => getMicFlowSnapshot(),
+): MicFlowSnapshotCoordinator {
+  let generation = 0;
+  let desiredOwnerId: string | null = null;
+  let inFlight: Promise<MicFlowSnapshot | null> | null = null;
+
+  const transition = (ownerId: string | null) => {
+    generation += 1;
+    desiredOwnerId = ownerId;
+    inFlight = null;
+  };
+
+  const invalidate = () => transition(null);
+
+  const refresh = (ownerId: string, options?: { force?: boolean }) => {
+    if (desiredOwnerId !== ownerId) {
+      transition(ownerId);
+    } else if (options?.force) {
+      generation += 1;
+      inFlight = null;
+    }
+
+    if (inFlight && !options?.force) {
+      return inFlight;
+    }
+
+    const requestGeneration = generation;
+    const requestOwnerId = desiredOwnerId;
+    let request: Promise<MicFlowSnapshot | null>;
+    let loaded: Promise<MicFlowSnapshot | null>;
+    try {
+      loaded = Promise.resolve(load(requestOwnerId as string));
+    } catch {
+      loaded = Promise.reject(new Error('snapshot_load_failed'));
+    }
+    request = loaded
+      .then((snapshot) => (
+        requestGeneration === generation && requestOwnerId === desiredOwnerId ? snapshot : null
+      ))
+      .catch(() => null)
+      .finally(() => {
+        if (inFlight === request) {
+          inFlight = null;
+        }
+      });
+    inFlight = request;
+    return request;
+  };
+
+  return { invalidate, refresh, transition };
+}
+
 export async function establishAnonymousMicFlowSession(options?: {
   timeoutMs?: number;
   isCurrent?: () => boolean;
@@ -104,6 +181,14 @@ export async function establishAnonymousMicFlowSession(options?: {
   return !options?.isCurrent || options.isCurrent() ? identity : null;
 }
 
+export async function getMicFlowOwnerId(options?: { timeoutMs?: number }): Promise<string | null> {
+  if (!isSupabaseConfigured || !supabase) {
+    return null;
+  }
+  const session = await bounded(Promise.resolve().then(() => getSession()), options?.timeoutMs);
+  return typeof session?.user?.id === 'string' && session.user.id.length > 0 ? session.user.id : null;
+}
+
 function identityMatches(
   session: Awaited<ReturnType<typeof getSession>>,
   identity: MicFlowRecordingIdentity,
@@ -125,6 +210,10 @@ function createTokenClient(identity: MicFlowRecordingIdentity): SupabaseClient |
 
 function isIsoTimestamp(value: unknown): value is string {
   return typeof value === 'string' && Number.isFinite(Date.parse(value));
+}
+
+function isDate(value: unknown): value is string {
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
 
 function isMicFlowState(value: unknown, ownerId: string): value is MicFlowState {
@@ -245,6 +334,58 @@ export async function getMicFlowState(): Promise<MicFlowState | null> {
       .select('owner_id,current_flow,best_flow,saves_available,last_rewarded_milestone,last_qualified_day,last_completed_at,timezone,created_at,updated_at')
       .maybeSingle();
     return result.error || !result.data || !isMicFlowState(result.data, identity.userId) ? null : result.data;
+  } catch {
+    return null;
+  }
+}
+
+function isMicFlowSnapshot(value: unknown): value is MicFlowSnapshot {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const snapshot = value as Record<string, unknown>;
+  if (
+    !MIC_FLOW_SNAPSHOT_STATUSES.includes(snapshot.status as MicFlowSnapshotStatus) ||
+    !Number.isInteger(snapshot.current_flow) ||
+    !Number.isInteger(snapshot.best_flow) ||
+    !Number.isInteger(snapshot.saves_available) ||
+    (snapshot.current_flow as number) < 0 ||
+    (snapshot.best_flow as number) < (snapshot.current_flow as number) ||
+    (snapshot.saves_available as number) < 0 ||
+    (snapshot.saves_available as number) > 3
+  ) {
+    return false;
+  }
+
+  if (snapshot.status === 'not_started') {
+    return snapshot.current_flow === 0 &&
+      snapshot.last_qualified_day === null &&
+      snapshot.timezone === null;
+  }
+
+  return isDate(snapshot.last_qualified_day) &&
+    typeof snapshot.timezone === 'string' &&
+    snapshot.timezone.length > 0;
+}
+
+export async function getMicFlowSnapshot(options?: { timeoutMs?: number }): Promise<MicFlowSnapshot | null> {
+  if (!isSupabaseConfigured || !supabase) {
+    return null;
+  }
+  const client = supabase;
+
+  const timeoutMs = options?.timeoutMs ?? SESSION_TIMEOUT_MS;
+  try {
+    const session = await bounded(Promise.resolve().then(() => getSession()), timeoutMs);
+    if (!session?.user?.id || !session.access_token) {
+      return null;
+    }
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    const result = await bounded(
+      Promise.resolve().then(() => client.rpc('get_mic_flow_snapshot', { p_timezone: timezone })),
+      timeoutMs,
+    );
+    return !result || result.error || !isMicFlowSnapshot(result.data) ? null : result.data;
   } catch {
     return null;
   }

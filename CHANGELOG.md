@@ -4,6 +4,9 @@
 
 ### Changed
 
+- Added the R0F-B1B Basic Mic Flow card and server-derived read model. Forward
+  migration `20260908000000` replaces incomplete timezone regexes in both Flow
+  RPCs with exact PostgreSQL catalog validation; live acceptance passed 30/30.
 - Added the local-only R0F-B1A server-authoritative Mic Flow completion and
   state foundation; offline and unowned recordings receive no Flow credit.
 - Added the iOS-only R0F-F1 RevenueCat Test Store identity foundation using

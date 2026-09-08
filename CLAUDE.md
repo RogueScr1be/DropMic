@@ -1,5 +1,6 @@
 # MicDrop engineering contract
 
+- Never validate PostgreSQL-recognized timezones with a hand-written regex; validate against `pg_catalog.pg_timezone_names` and test multi-segment zones.
 - Read `AGENTS.md` and the pinned Expo SDK docs before changing platform code.
 - Keep R0C metadata-only: Supabase stores identity/profile/preferences/attempt metadata; audio stays local and is never uploaded.
 - Expose only `EXPO_PUBLIC_SUPABASE_URL` and the publishable anon key to the client; never add a service-role key to app code or env files.
