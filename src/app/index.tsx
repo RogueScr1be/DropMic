@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AppState, Animated, Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AppState, Animated, Modal, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { SignupFlow } from '@/features/auth/SignupFlow';
 import { clearUnclaimedAttempt, getUnclaimedAttempt, saveUnclaimedAttempt, type UnclaimedAttempt } from '@/features/auth/auth-recovery';
@@ -18,7 +17,9 @@ import {
 } from '@/features/mic-flow/mic-flow-service';
 import { MicFlowCard } from '@/features/mic-flow/MicFlowCard';
 import { bindRevenueCatSession } from '@/features/billing/revenuecat-session';
-import { PREPARATION_COUNTDOWN_MS, formatCountdownNumber, formatSpeakingTime, phaseForRecordingState, type FirstUsePhase } from '@/features/first-use/first-use-flow';
+import { AgeGate } from '@/features/first-use/AgeGate';
+import { firstScreenAfterSplash, PREPARATION_COUNTDOWN_MS, SPLASH_DURATION_MS, formatCountdownNumber, formatSpeakingTime, phaseForRecordingState, type FirstUsePhase } from '@/features/first-use/first-use-flow';
+import { hasAcceptedAgeGate, saveAgeGateAcceptance } from '@/features/first-use/first-run-storage';
 import { SplashReveal } from '@/features/first-use/SplashReveal';
 import { useReducedMotion } from '@/features/first-use/use-reduced-motion';
 import { QuickReadFlow } from '@/features/quick-read/QuickReadFlow';
@@ -29,20 +30,24 @@ import {
   deriveElapsedMs,
   isInterruptibleState,
   isRecordingState,
-  RECORDING_DURATIONS,
   type RecordingDuration,
 } from '@/features/recording/recording-machine';
 import { useRecordingStore } from '@/features/recording/recording-store';
 import { detectWebRecordingMimeType } from '@/features/recording/web-recording-format';
 import { selectNextTopic, type SpeakingTopic } from '@/features/topics/topic-catalog';
 import { SolariBoard } from '@/features/solari/SolariBoard';
+import { ActionButton } from '@/ui/ActionButton';
+import { AppHeader } from '@/ui/AppHeader';
+import { AppShell } from '@/ui/AppShell';
+import { DurationPicker } from '@/ui/DurationPicker';
+import { PromptCard } from '@/ui/PromptCard';
+import { colors, radii, spacing, typography } from '@/ui/theme';
 
 type ExperiencePhase = FirstUsePhase | 'interrupted' | 'error';
 
 export default function AudioProofScreen() {
   const audio = useLocalAudioRecorder();
   const { auth } = useLocalSearchParams<{ auth?: string }>();
-  const { width } = useWindowDimensions();
   const reducedMotion = useReducedMotion();
   const recordingState = useRecordingStore((store) => store.state);
   const selectedDurationSeconds = useRecordingStore((store) => store.selectedDurationSeconds);
@@ -55,9 +60,10 @@ export default function AudioProofScreen() {
   const dispatch = useRecordingStore((store) => store.dispatch);
   const setNow = useRecordingStore((store) => store.setNow);
   const [phase, setPhase] = useState<ExperiencePhase>('splash');
+  const [ageGateAccepted, setAgeGateAccepted] = useState<boolean | null>(null);
+  const [splashElapsed, setSplashElapsed] = useState(false);
   const [topic, setTopic] = useState<SpeakingTopic>(() => selectNextTopic(null));
   const [revealKey, setRevealKey] = useState(0);
-  const [soundEnabled, setSoundEnabled] = useState(true);
   const [countdownStartedAtMs, setCountdownStartedAtMs] = useState<number | null>(null);
   const [countdownNowMs, setCountdownNowMs] = useState(0);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -87,19 +93,21 @@ export default function AudioProofScreen() {
   const micFlowSnapshotRequestRef = useRef(0);
   const micFlowSnapshotCoordinatorRef = useRef(createMicFlowSnapshotCoordinator());
 
-  const isTablet = width >= 700;
   const elapsed = useMemo(
     () => deriveElapsedMs(startedAtMs, nowMs, selectedDurationSeconds * 1000),
     [nowMs, selectedDurationSeconds, startedAtMs],
   );
   const statePhase = phaseForRecordingState(recordingState);
+  const firstUsePhase = phase === 'splash' && splashElapsed && ageGateAccepted !== null
+    ? firstScreenAfterSplash(ageGateAccepted)
+    : phase;
   const displayedPhase: ExperiencePhase =
     statePhase ??
     (recordingState === 'interrupted'
       ? 'interrupted'
       : recordingState === 'error'
         ? 'error'
-        : phase);
+        : firstUsePhase);
 
   const currentAttempt = useMemo<UnclaimedAttempt | null>(() => {
     if (recordingState !== 'completed' || completedAtMs === null) {
@@ -114,6 +122,23 @@ export default function AudioProofScreen() {
       topicId: topic.id,
     };
   }, [completedAtMs, elapsedMs, recordingState, selectedDurationSeconds, takeIdentity.clientAttemptId, topic.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void hasAcceptedAgeGate().then((accepted) => {
+      if (!cancelled) {
+        setAgeGateAccepted(accepted);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setSplashElapsed(true), reducedMotion ? 0 : SPLASH_DURATION_MS);
+    return () => clearTimeout(timer);
+  }, [reducedMotion]);
 
   const refreshRecoveryAttempt = useCallback(async () => {
     setRecoveryAttempt(await getUnclaimedAttempt());
@@ -601,60 +626,75 @@ export default function AudioProofScreen() {
   }, [currentAttempt, serverAttemptId]);
 
   if (displayedPhase === 'splash') {
-    return <SplashReveal onComplete={() => setPhase('topic_reveal')} reducedMotion={reducedMotion} />;
+    return <SplashReveal reducedMotion={reducedMotion} />;
   }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <ScrollView
-        contentContainerStyle={[styles.scrollContent, isTablet && styles.tabletContent]}
-        showsVerticalScrollIndicator={false}>
-        <View style={styles.topBar}>
-          <Text style={styles.brand}>MICDROP</Text>
-          <Text style={styles.sessionMark}>R0B / LOCAL TAKE</Text>
-        </View>
-
-        {displayedPhase !== 'recording' && displayedPhase !== 'countdown' && (
-          <MicFlowCard loading={micFlowSnapshotLoading} snapshot={micFlowSnapshot} />
-        )}
-
-        {recoveryAttempt && displayedPhase !== 'completion' && (
-          <View style={styles.recoveryBanner}>
-            <Text style={styles.recoveryBannerText}>You have a completed local take ready to claim.</Text>
-            <ActionButton label="Resume Quick Read setup" onPress={() => setIsAuthFlowVisible(true)} secondary />
-          </View>
-        )}
-
-        {displayedPhase === 'topic_reveal' && (
-          <TopicReveal
-            onComplete={() => setPhase('duration_selection')}
-            prompt={topic.prompt}
-            reducedMotion={reducedMotion}
-            revealKey={revealKey}
-            soundEnabled={soundEnabled}
-            setSoundEnabled={setSoundEnabled}
+    <>
+      <AppShell
+        header={
+          <AppHeader
+            onBack={displayedPhase === 'duration_selection' ? () => setPhase('topic_reveal') : undefined}
           />
-        )}
+        }>
+        {(layout) => (
+          <>
+          {displayedPhase === 'age_gate' && (
+            <AgeGate
+              onAccept={async () => {
+                await saveAgeGateAcceptance();
+                setAgeGateAccepted(true);
+                setPhase('topic_reveal');
+              }}
+            />
+          )}
 
-        {displayedPhase === 'duration_selection' && (
-          <DurationSelection
-            actionError={actionError ?? (recordingState === 'permission_denied' ? 'Microphone access is needed for your take.' : recordingError)}
-            isStarting={isStarting}
-            onBegin={beginRecording}
-            onPermissionRetry={beginRecording}
-            prompt={topic.prompt}
-            selectedDuration={selectedDurationSeconds}
-            locked={Boolean(takeTwoBaselineRunId)}
-            setDuration={(duration) => {
-              if (!takeTwoBaselineRunId) {
-                dispatch({ type: 'SELECT_DURATION', duration });
-              }
-            }}
-            topicCategory={topic.category}
-          />
-        )}
+          {displayedPhase !== 'age_gate' && (
+            <View style={[styles.experienceGrid, layout.useTwoColumns && displayedPhase !== 'topic_reveal' && styles.experienceGridWide]}>
+              <View style={styles.primaryColumn} testID="primary-region">
+                {recoveryAttempt && displayedPhase !== 'completion' && (
+                  <View style={styles.recoveryBanner}>
+                    <Text style={styles.recoveryBannerText}>You have a completed local take ready to claim.</Text>
+                    <ActionButton label="Resume Quick Read setup" onPress={() => setIsAuthFlowVisible(true)} secondary />
+                  </View>
+                )}
 
-        {displayedPhase === 'countdown' && countdownStartedAtMs !== null && (
+                {displayedPhase === 'topic_reveal' && (
+                  <TopicReveal
+                    density={layout.solariDensity}
+                    onComplete={() => undefined}
+                    onContinue={() => setPhase('duration_selection')}
+                    onNewDrop={chooseNewTopic}
+                    prompt={topic.prompt}
+                    reducedMotion={reducedMotion}
+                    revealKey={revealKey}
+                    flowCard={(
+                      <View style={styles.flowColumnStacked} testID="flow-region">
+                        <MicFlowCard loading={micFlowSnapshotLoading} snapshot={micFlowSnapshot} />
+                      </View>
+                    )}
+                  />
+                )}
+
+                {displayedPhase === 'duration_selection' && (
+                  <DurationSelection
+                    actionError={actionError ?? (recordingState === 'permission_denied' ? 'Microphone access is needed for your take.' : recordingError)}
+                    isStarting={isStarting}
+                    locked={Boolean(takeTwoBaselineRunId)}
+                    onBegin={beginRecording}
+                    onPermissionRetry={beginRecording}
+                    prompt={topic.prompt}
+                    selectedDuration={selectedDurationSeconds}
+                    setDuration={(duration) => {
+                      if (!takeTwoBaselineRunId) {
+                        dispatch({ type: 'SELECT_DURATION', duration });
+                      }
+                    }}
+                    stackedDurations={layout.stackControls}
+                  />
+                )}
+
+                {displayedPhase === 'countdown' && countdownStartedAtMs !== null && (
           <CountdownView
             countdownNumber={formatCountdownNumber(countdownStartedAtMs, countdownNowMs)}
             onCancel={() => {
@@ -665,18 +705,18 @@ export default function AudioProofScreen() {
             prompt={topic.prompt}
             reducedMotion={reducedMotion}
           />
-        )}
+                )}
 
-        {displayedPhase === 'recording' && (
+                {displayedPhase === 'recording' && (
           <RecordingView
             elapsed={elapsed}
             onStop={() => void stopRecording()}
             prompt={topic.prompt}
             selectedDuration={selectedDurationSeconds}
           />
-        )}
+                )}
 
-        {displayedPhase === 'interrupted' && (
+                {displayedPhase === 'interrupted' && (
           <StatusPanel
             actionLabel="Try this prompt again"
             body="The take stopped safely. Nothing left this device."
@@ -684,9 +724,9 @@ export default function AudioProofScreen() {
             prompt={topic.prompt}
             title="A pause, not a problem."
           />
-        )}
+                )}
 
-        {displayedPhase === 'error' && (
+                {displayedPhase === 'error' && (
           <StatusPanel
             actionLabel="Try again"
             body={actionError ?? recordingError ?? 'The take failed safely. Your local state is still intact.'}
@@ -694,9 +734,9 @@ export default function AudioProofScreen() {
             prompt={topic.prompt}
             title="Let’s reset the take."
           />
-        )}
+                )}
 
-        {displayedPhase === 'completion' && recordingUri && (
+                {displayedPhase === 'completion' && recordingUri && (
           <CompletionView
             completedAtMs={completedAtMs}
             elapsed={elapsedMs}
@@ -718,8 +758,21 @@ export default function AudioProofScreen() {
             reducedMotion={reducedMotion}
             selectedDuration={selectedDurationSeconds}
           />
+                )}
+              </View>
+
+              {displayedPhase !== 'topic_reveal' && displayedPhase !== 'recording' && displayedPhase !== 'countdown' && (
+                <View
+                  style={[styles.flowColumn, !layout.useTwoColumns && styles.flowColumnStacked]}
+                  testID="flow-region">
+                  <MicFlowCard loading={micFlowSnapshotLoading} snapshot={micFlowSnapshot} />
+                </View>
+              )}
+            </View>
+          )}
+          </>
         )}
-      </ScrollView>
+      </AppShell>
       <SignupFlow
         attempt={currentAttempt ?? recoveryAttempt}
         onAttemptClaimed={setServerAttemptId}
@@ -754,49 +807,52 @@ export default function AudioProofScreen() {
         takeId={takeIdentity.clientAttemptId}
         visible={isQuickReadVisible}
       />
-    </SafeAreaView>
+    </>
   );
 }
 
 function TopicReveal({
+  density,
+  flowCard,
   onComplete,
+  onContinue,
+  onNewDrop,
   prompt,
   reducedMotion,
   revealKey,
-  soundEnabled,
-  setSoundEnabled,
 }: {
+  density: 'compact-landscape' | 'phone' | 'tablet';
+  flowCard: ReactNode;
   onComplete: () => void;
+  onContinue: () => void;
+  onNewDrop: () => void;
   prompt: string;
   reducedMotion: boolean;
   revealKey: number;
-  soundEnabled: boolean;
-  setSoundEnabled: (enabled: boolean) => void;
 }) {
   return (
     <View style={styles.section} testID="topic-reveal">
-      <Text style={styles.eyebrow}>TODAY’S SPEAKING PROMPT</Text>
-      <Text accessibilityRole="header" style={styles.heroTitle}>
-        Give the ordinary a little voltage.
-      </Text>
+      <Text accessibilityRole="header" maxFontSizeMultiplier={1.5} style={styles.heroTitle}>Today’s Drop</Text>
+      <ActionButton
+        accessibilityHint="Shows a different local prompt"
+        label="New Drop!"
+        onPress={onNewDrop}
+        secondary
+      />
       <SolariBoard
+        density={density}
         onComplete={onComplete}
         prompt={prompt}
         reducedMotion={reducedMotion}
         revealKey={revealKey}
-        soundEnabled={soundEnabled}
       />
-      <View style={styles.revealFooter}>
-        <Text style={styles.helperText}>Your prompt is ready when the board stops moving.</Text>
-        <Pressable
-          accessibilityLabel={soundEnabled ? 'Turn reveal sound off' : 'Turn reveal sound on'}
-          accessibilityRole="switch"
-          accessibilityState={{ checked: soundEnabled }}
-          onPress={() => setSoundEnabled(!soundEnabled)}
-          style={[styles.soundToggle, !soundEnabled && styles.soundToggleOff]}>
-          <Text style={styles.soundToggleText}>{soundEnabled ? 'CLACK / ON' : 'CLACK / OFF'}</Text>
-        </Pressable>
-      </View>
+      {flowCard}
+      <ActionButton
+        accessibilityHint="Opens recording preparation for this prompt"
+        label="Let’s Go!"
+        onPress={onContinue}
+        testID="prompt-continue"
+      />
     </View>
   );
 }
@@ -810,7 +866,7 @@ function DurationSelection({
   prompt,
   selectedDuration,
   setDuration,
-  topicCategory,
+  stackedDurations,
 }: {
   actionError: string | null;
   isStarting: boolean;
@@ -820,40 +876,26 @@ function DurationSelection({
   prompt: string;
   selectedDuration: RecordingDuration;
   setDuration: (duration: RecordingDuration) => void;
-  topicCategory: string;
+  stackedDurations: boolean;
 }) {
   return (
     <View style={styles.section} testID="duration-selection">
-      <Text style={styles.eyebrow}>{topicCategory.toUpperCase()} / YOUR TAKE</Text>
-      <Text accessibilityRole="header" style={styles.sectionTitle}>
-        How much room do you want?
-      </Text>
+      <Text accessibilityRole="header" style={styles.sectionTitle}>Today’s Drop</Text>
       <PromptCard prompt={prompt} />
       {locked && <Text style={styles.lockedTakeNote}>TAKE TWO · SAME PROMPT AND CLOCK</Text>}
-      <Text style={styles.label}>SET THE CLOCK</Text>
-      <View accessibilityRole="radiogroup" style={styles.durationRow}>
-        {RECORDING_DURATIONS.map((duration) => (
-          <Pressable
-            accessibilityLabel={`${duration} seconds`}
-            accessibilityRole="radio"
-            accessibilityState={{ disabled: locked, selected: selectedDuration === duration }}
-            disabled={locked}
-            key={duration}
-            onPress={() => setDuration(duration)}
-            style={[styles.durationButton, selectedDuration === duration && styles.durationButtonSelected]}>
-            <Text style={[styles.durationNumber, selectedDuration === duration && styles.durationNumberSelected]}>{duration}</Text>
-            <Text style={[styles.durationUnit, selectedDuration === duration && styles.durationUnitSelected]}>SEC</Text>
-          </Pressable>
-        ))}
-      </View>
+      <DurationPicker disabled={locked} onChange={setDuration} selected={selectedDuration} stacked={stackedDurations} />
       {actionError && (
         <View style={styles.inlineNotice}>
           <Text style={styles.inlineNoticeText}>{actionError}</Text>
           <ActionButton label="Try microphone permission again" onPress={onPermissionRetry} secondary />
         </View>
       )}
-      <ActionButton disabled={isStarting} label={isStarting ? 'Preparing your take…' : 'Start speaking'} onPress={onBegin} />
-      <Text style={styles.privacyNote}>No upload. No analysis. Just one local speaking rep.</Text>
+      <ActionButton
+        accessibilityHint="Starts microphone preparation and the countdown"
+        disabled={isStarting}
+        label={isStarting ? 'Preparing your Drop…' : 'Let’s Go!'}
+        onPress={onBegin}
+      />
     </View>
   );
 }
@@ -1032,41 +1074,6 @@ function StatusPanel({
   );
 }
 
-function PromptCard({ prompt }: { prompt: string }) {
-  return (
-    <View accessibilityLabel={`Speaking prompt: ${prompt}`} style={styles.promptCard} testID="speaking-prompt">
-      <Text style={styles.promptQuote}>“</Text>
-      <Text style={styles.promptText}>{prompt}</Text>
-    </View>
-  );
-}
-
-function ActionButton({
-  compact = false,
-  disabled = false,
-  label,
-  onPress,
-  secondary = false,
-}: {
-  compact?: boolean;
-  disabled?: boolean;
-  label: string;
-  onPress: () => void;
-  secondary?: boolean;
-}) {
-  return (
-    <Pressable
-      accessibilityLabel={label}
-      accessibilityRole="button"
-      accessibilityState={{ disabled }}
-      disabled={disabled}
-      onPress={onPress}
-      style={({ pressed }) => [styles.actionButton, compact && styles.compactActionButton, secondary && styles.actionButtonSecondary, pressed && styles.pressed, disabled && styles.disabled]}>
-      <Text style={[styles.actionButtonText, secondary && styles.actionButtonTextSecondary]}>{label}</Text>
-    </Pressable>
-  );
-}
-
 function quickReadAudioExtension(uri: string | null): 'm4a' | 'mp4' | 'webm' | 'wav' | 'ogg' {
   const extension = uri?.split('?')[0].split('.').pop()?.toLowerCase();
   if (extension === 'm4a' || extension === 'mp4' || extension === 'webm' || extension === 'wav' || extension === 'ogg') {
@@ -1076,61 +1083,36 @@ function quickReadAudioExtension(uri: string | null): 'm4a' | 'mp4' | 'webm' | '
 }
 
 const styles = StyleSheet.create({
-  safeArea: { backgroundColor: '#f4ebdd', flex: 1 },
-  scrollContent: { gap: 26, padding: 22, paddingBottom: 42 },
-  tabletContent: { alignSelf: 'center', maxWidth: 820, width: '100%' },
-  topBar: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
-  brand: { color: '#18332d', fontSize: 15, fontWeight: '900', letterSpacing: 2.2 },
-  sessionMark: { color: '#799087', fontSize: 10, fontWeight: '700', letterSpacing: 1.6 },
-  section: { gap: 22 },
-  centerSection: { alignItems: 'center', gap: 20, justifyContent: 'center', minHeight: 520 },
-  eyebrow: { color: '#e4572e', fontSize: 11, fontWeight: '900', letterSpacing: 2.2 },
-  heroTitle: { color: '#18332d', fontFamily: 'Georgia', fontSize: 36, fontWeight: '700', letterSpacing: -1, lineHeight: 42 },
-  sectionTitle: { color: '#18332d', fontFamily: 'Georgia', fontSize: 30, fontWeight: '700', lineHeight: 36 },
-  helperText: { color: '#526c63', flex: 1, fontSize: 13, lineHeight: 19 },
-  revealFooter: { alignItems: 'center', flexDirection: 'row', gap: 12 },
-  soundToggle: { alignItems: 'center', backgroundColor: '#18332d', borderRadius: 99, minHeight: 44, paddingHorizontal: 14 },
-  soundToggleOff: { backgroundColor: '#d9cec0' },
-  soundToggleText: { color: '#f4ebdd', fontSize: 10, fontWeight: '900', letterSpacing: 1 },
-  label: { color: '#799087', fontSize: 11, fontWeight: '900', letterSpacing: 2 },
-  lockedTakeNote: { color: '#e4572e', fontSize: 11, fontWeight: '900', letterSpacing: 1.4 },
-  durationRow: { flexDirection: 'row', gap: 10 },
-  durationButton: { alignItems: 'center', backgroundColor: '#e7dccb', borderColor: '#c4b5a2', borderRadius: 12, borderWidth: 1, flex: 1, minHeight: 82, justifyContent: 'center' },
-  durationButtonSelected: { backgroundColor: '#18332d', borderColor: '#18332d' },
-  durationNumber: { color: '#18332d', fontFamily: 'Georgia', fontSize: 28, fontWeight: '700' },
-  durationNumberSelected: { color: '#f4ebdd' },
-  durationUnit: { color: '#799087', fontSize: 10, fontWeight: '900', letterSpacing: 1 },
-  durationUnitSelected: { color: '#86c7b3' },
-  promptCard: { backgroundColor: '#fffaf2', borderColor: '#ded1c1', borderRadius: 16, borderWidth: 1, gap: 3, padding: 20 },
-  promptQuote: { color: '#e4572e', fontFamily: 'Georgia', fontSize: 40, height: 28, lineHeight: 42 },
-  promptText: { color: '#18332d', fontFamily: 'Georgia', fontSize: 24, fontWeight: '700', lineHeight: 31 },
-  inlineNotice: { backgroundColor: '#f8d8ca', borderRadius: 12, gap: 12, padding: 14 },
-  inlineNoticeText: { color: '#8c321e', fontSize: 14, lineHeight: 21 },
-  actionButton: { alignItems: 'center', backgroundColor: '#e4572e', borderRadius: 12, justifyContent: 'center', minHeight: 56, paddingHorizontal: 20, width: '100%' },
-  compactActionButton: { flex: 1, width: undefined },
-  actionButtonSecondary: { backgroundColor: 'transparent', borderColor: '#b9aa98', borderWidth: 1 },
-  actionButtonText: { color: '#fffaf2', fontSize: 15, fontWeight: '900', letterSpacing: 0.3 },
-  actionButtonTextSecondary: { color: '#18332d' },
-  pressed: { opacity: 0.75 },
-  disabled: { opacity: 0.45 },
-  privacyNote: { color: '#799087', fontSize: 12, textAlign: 'center' },
-  countdownNumber: { color: '#e4572e', fontFamily: 'Georgia', fontSize: 148, fontWeight: '700', lineHeight: 160 },
+  experienceGrid: { gap: spacing.xxl },
+  experienceGridWide: { alignItems: 'flex-start', flexDirection: 'row', gap: spacing.xxxl },
+  primaryColumn: { flex: 1, gap: spacing.xxl, minWidth: 0 },
+  flowColumn: { flexShrink: 0, width: 340 },
+  flowColumnStacked: { width: '100%' },
+  section: { gap: spacing.xl },
+  centerSection: { alignItems: 'center', gap: spacing.xl, justifyContent: 'center', paddingVertical: spacing.xxxl },
+  eyebrow: { color: colors.coral, ...typography.eyebrow },
+  heroTitle: { color: colors.inkStrong, fontFamily: typography.displayFamily, letterSpacing: -1, ...typography.displayLarge },
+  sectionTitle: { color: colors.inkStrong, fontFamily: typography.displayFamily, ...typography.displayMedium },
+  lockedTakeNote: { color: colors.coral, ...typography.eyebrow },
+  inlineNotice: { backgroundColor: colors.dangerSoft, borderRadius: radii.md, gap: spacing.md, padding: spacing.lg },
+  inlineNoticeText: { color: colors.danger, fontSize: 14, lineHeight: 21 },
+  countdownNumber: { color: colors.coral, fontFamily: typography.displayFamily, fontSize: 138, fontWeight: '700', lineHeight: 150 },
   countdownNumberStatic: { opacity: 0.9 },
-  centerPrompt: { color: '#526c63', fontFamily: 'Georgia', fontSize: 21, lineHeight: 29, maxWidth: 560, textAlign: 'center' },
-  liveDot: { backgroundColor: '#e4572e', borderRadius: 99, height: 16, width: 16 },
-  timer: { color: '#18332d', fontFamily: 'Georgia', fontSize: 82, fontWeight: '700', letterSpacing: -3 },
-  timerTarget: { color: '#799087', fontSize: 12, fontWeight: '900', letterSpacing: 2 },
-  completionMark: { alignItems: 'center', backgroundColor: '#18332d', borderRadius: 99, height: 82, justifyContent: 'center', width: 82 },
-  completionMarkText: { color: '#86c7b3', fontSize: 48, fontWeight: '300' },
-  completionMeta: { color: '#799087', fontSize: 13 },
-  actionStack: { gap: 12 },
-  secondaryRow: { flexDirection: 'row', gap: 12 },
-  errorText: { color: '#8c321e', fontSize: 15, lineHeight: 23, textAlign: 'center' },
+  centerPrompt: { color: colors.muted, fontFamily: typography.displayFamily, fontSize: 21, lineHeight: 29, maxWidth: 560, textAlign: 'center' },
+  liveDot: { backgroundColor: colors.coral, borderRadius: radii.pill, height: 16, width: 16 },
+  timer: { color: colors.inkStrong, fontFamily: typography.displayFamily, fontSize: 78, fontWeight: '700', letterSpacing: -3 },
+  timerTarget: { color: colors.muted, fontSize: 12, fontWeight: '900', letterSpacing: 2 },
+  completionMark: { alignItems: 'center', backgroundColor: colors.ink, borderRadius: radii.pill, height: 82, justifyContent: 'center', width: 82 },
+  completionMarkText: { color: colors.successSoft, fontSize: 48, fontWeight: '300' },
+  completionMeta: { color: colors.muted, fontSize: 13 },
+  actionStack: { gap: spacing.md },
+  secondaryRow: { flexDirection: 'row', gap: spacing.md },
+  errorText: { color: colors.danger, fontSize: 15, lineHeight: 23, textAlign: 'center' },
   recordingMetadata: { height: 0, opacity: 0, width: 0 },
-  recoveryBanner: { backgroundColor: '#e7dccb', borderRadius: 14, gap: 10, padding: 14 },
-  recoveryBannerText: { color: '#18332d', fontSize: 14, lineHeight: 20 },
-  savePromptBackdrop: { backgroundColor: 'rgba(24, 51, 45, 0.58)', flex: 1, justifyContent: 'flex-end' },
-  savePromptSheet: { backgroundColor: '#fffaf2', borderTopLeftRadius: 24, borderTopRightRadius: 24, gap: 14, padding: 24, paddingBottom: 42 },
-  savePromptTitle: { color: '#18332d', fontFamily: 'Georgia', fontSize: 30, fontWeight: '700', lineHeight: 36 },
-  savePromptBody: { color: '#526c63', fontSize: 17, lineHeight: 25 },
+  recoveryBanner: { backgroundColor: colors.surfaceMuted, borderRadius: radii.md, gap: spacing.md, padding: spacing.lg },
+  recoveryBannerText: { color: colors.ink, fontSize: 14, lineHeight: 20 },
+  savePromptBackdrop: { backgroundColor: 'rgba(8, 31, 51, 0.58)', flex: 1, justifyContent: 'flex-end' },
+  savePromptSheet: { backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, gap: spacing.lg, padding: spacing.xxl, paddingBottom: spacing.jumbo },
+  savePromptTitle: { color: colors.inkStrong, fontFamily: typography.displayFamily, ...typography.displayMedium },
+  savePromptBody: { color: colors.muted, fontSize: 17, lineHeight: 25 },
 });

@@ -25,16 +25,23 @@ function textContent(node: unknown): string {
 }
 
 describe('MicFlowCard', () => {
-  it('renders the server snapshot state and all authoritative counts', () => {
+  it('starts collapsed and expands and collapses authoritative details', () => {
     let tree: ReturnType<typeof create>;
     act(() => {
       tree = create(React.createElement(MicFlowCard, { loading: false, snapshot: state }));
     });
-    const text = textContent(tree!.toJSON());
-    expect(text).toContain('Mic Flow: 2 days');
-    expect(text).toContain('Keep the mic hot. One rep today.');
-    expect(text).toContain('5 days');
-    expect(text).toContain('1');
+    const toggle = tree!.root.findByProps({ testID: 'mic-flow-toggle' });
+    expect(toggle.props.accessibilityState).toEqual({ expanded: false });
+    expect(textContent(tree!.toJSON())).toContain('Mic Flow: 2 days');
+    expect(textContent(tree!.toJSON())).not.toContain('Keep the mic hot. One rep today.');
+
+    act(() => toggle.props.onPress());
+    expect(tree!.root.findByProps({ testID: 'mic-flow-toggle' }).props.accessibilityState).toEqual({ expanded: true });
+    expect(textContent(tree!.toJSON())).toContain('Keep the mic hot. One rep today.');
+    expect(textContent(tree!.toJSON())).toContain('5 days');
+
+    act(() => tree!.root.findByProps({ testID: 'mic-flow-toggle' }).props.onPress());
+    expect(tree!.root.findAllByProps({ testID: 'mic-flow-details' })).toHaveLength(0);
   });
 
   it('renders loading and unavailable without fabricated counts', () => {
@@ -44,10 +51,14 @@ describe('MicFlowCard', () => {
       loadingTree = create(React.createElement(MicFlowCard, { loading: true, snapshot: null }));
       unavailableTree = create(React.createElement(MicFlowCard, { loading: false, snapshot: null }));
     });
-    expect(textContent(loadingTree!.toJSON())).toContain('Checking your Mic Flow');
+    expect(textContent(loadingTree!.toJSON())).toContain('Checking');
     const unavailable = textContent(unavailableTree!.toJSON());
-    expect(unavailable).toContain('Mic Flow is unavailable right now.');
+    expect(unavailable).toContain('Unavailable');
     expect(unavailable).not.toContain('0 days');
+
+    act(() => unavailableTree!.root.findByProps({ testID: 'mic-flow-toggle' }).props.onPress());
+    expect(textContent(unavailableTree!.toJSON())).toContain('Mic Flow is unavailable right now.');
+    expect(textContent(unavailableTree!.toJSON())).not.toContain('0 days');
   });
 
   it('keeps Best visible while hiding stale current Flow for reset-pending state', () => {
@@ -58,6 +69,7 @@ describe('MicFlowCard', () => {
         snapshot: { ...state, status: 'reset_pending', current_flow: 8, best_flow: 13 },
       }));
     });
+    act(() => tree!.root.findByProps({ testID: 'mic-flow-toggle' }).props.onPress());
     const text = textContent(tree!.toJSON());
     expect(text).toContain('13 days');
     expect(text).not.toContain('Mic Flow: 8 days');

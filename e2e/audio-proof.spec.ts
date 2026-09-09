@@ -4,10 +4,17 @@ test('runs the local first-use loop and keeps the recording on-device', async ({
   test.setTimeout(70_000);
   await page.goto('/');
 
+  await expect(page.getByTestId('age-gate')).toBeVisible({ timeout: 5_000 });
+  await page.getByRole('checkbox', { name: 'I confirm I am 13 or older' }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
   await expect(page.getByTestId('topic-reveal')).toBeVisible({ timeout: 5_000 });
-  await expect(page.getByTestId('duration-selection')).toBeVisible({ timeout: 8_000 });
+  await expect(page.getByTestId(/^solari-tile-/)).toHaveCount(50);
+  await expect(page.getByRole('switch', { name: /reveal sound/i })).toHaveCount(0);
+  await expect(page.getByText(/drop ready/i)).toHaveCount(0);
+  await page.getByRole('button', { name: 'Let’s Go!' }).click();
+  await expect(page.getByTestId('duration-selection')).toBeVisible();
   await page.getByRole('radio', { name: '30 seconds' }).click();
-  await page.getByRole('button', { name: 'Start speaking' }).click();
+  await page.getByRole('button', { name: 'Let’s Go!' }).click();
   await expect(page.getByRole('button', { name: 'Cancel countdown' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Stop recording' })).toBeVisible({ timeout: 5_000 });
 
@@ -30,10 +37,11 @@ test('runs the local first-use loop and keeps the recording on-device', async ({
 
   await page.getByRole('button', { name: 'Delete recording' }).click();
   await expect(page.getByTestId('topic-reveal')).toBeVisible({ timeout: 8_000 });
-  await expect(page.getByTestId('duration-selection')).toBeVisible({ timeout: 8_000 });
+  await page.getByRole('button', { name: 'Let’s Go!' }).click();
+  await expect(page.getByTestId('duration-selection')).toBeVisible();
 
   await page.getByRole('radio', { name: '30 seconds' }).click();
-  await page.getByRole('button', { name: 'Start speaking' }).click();
+  await page.getByRole('button', { name: 'Let’s Go!' }).click();
   await expect(page.getByRole('button', { name: 'Stop recording' })).toBeVisible({ timeout: 5_000 });
   await page.evaluate(() => {
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
@@ -46,12 +54,14 @@ test('runs the local first-use loop and keeps the recording on-device', async ({
   });
 
   await page.getByRole('button', { name: 'Try this prompt again' }).click();
-  await expect(page.getByTestId('duration-selection')).toBeVisible({ timeout: 8_000 });
+  await expect(page.getByTestId('topic-reveal')).toBeVisible({ timeout: 8_000 });
+  await page.getByRole('button', { name: 'Let’s Go!' }).click();
+  await expect(page.getByTestId('duration-selection')).toBeVisible();
   await page.getByRole('radio', { name: '30 seconds' }).click();
-  await page.getByRole('button', { name: 'Start speaking' }).click();
+  await page.getByRole('button', { name: 'Let’s Go!' }).click();
   await expect(page.getByRole('button', { name: 'Stop recording' })).toBeVisible({ timeout: 5_000 });
   await page.getByRole('button', { name: 'Stop recording' }).click();
   await expect(page.getByRole('heading', { name: 'That’s a take.' })).toBeVisible({ timeout: 5_000 });
   await page.getByRole('button', { name: 'Retry recording' }).click();
-  await expect(page.getByTestId('duration-selection')).toBeVisible({ timeout: 8_000 });
+  await expect(page.getByTestId('topic-reveal')).toBeVisible({ timeout: 8_000 });
 });

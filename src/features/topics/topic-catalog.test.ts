@@ -15,6 +15,13 @@ describe('topic catalog', () => {
     expect(next.id).not.toBe(first.id);
   });
 
+  it('keeps seeded New Drop selection local and repeatable', () => {
+    const previous = TOPIC_CATALOG[1];
+
+    expect(selectNextTopic(previous.id, 17)).toEqual(selectNextTopic(previous.id, 17));
+    expect(selectNextTopic(previous.id, 17).id).not.toBe(previous.id);
+  });
+
   it('normalizes negative and decimal seeds', () => {
     expect(selectTopic(-1)).toEqual(selectTopic(1));
     expect(selectTopic(2.9)).toEqual(selectTopic(2));

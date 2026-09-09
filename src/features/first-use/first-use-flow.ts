@@ -2,6 +2,7 @@ import type { RecordingState } from '@/features/recording/recording-machine';
 
 export type FirstUsePhase =
   | 'splash'
+  | 'age_gate'
   | 'topic_reveal'
   | 'duration_selection'
   | 'countdown'
@@ -10,6 +11,10 @@ export type FirstUsePhase =
 
 export const SPLASH_DURATION_MS = 900;
 export const PREPARATION_COUNTDOWN_MS = 1_800;
+
+export function firstScreenAfterSplash(ageGateAccepted: boolean) : FirstUsePhase {
+  return ageGateAccepted ? 'topic_reveal' : 'age_gate';
+}
 
 export function formatSpeakingTime(milliseconds: number) {
   const seconds = Math.max(0, Math.floor(milliseconds / 1_000));
@@ -47,4 +52,8 @@ export function createCompletionGate(onComplete: () => void) {
 
 export function shouldPlayClack(soundEnabled: boolean) {
   return soundEnabled;
+}
+
+export function shouldAnimateSolari(reducedMotion: boolean) {
+  return !reducedMotion;
 }

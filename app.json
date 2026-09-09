@@ -1,15 +1,16 @@
 {
   "expo": {
-    "name": "MicDrop",
+    "name": "DropMic",
     "slug": "MicDrop",
     "version": "1.0.0",
-    "orientation": "portrait",
+    "orientation": "default",
     "icon": "./assets/images/icon.png",
     "scheme": "micdrop",
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/expo.icon",
-      "bundleIdentifier": "com.prentisswhitley.dropmic"
+      "bundleIdentifier": "com.prentisswhitley.dropmic",
+      "supportsTablet": true
     },
     "android": {
       "adaptiveIcon": {
@@ -37,7 +38,7 @@
       [
         "expo-audio",
         {
-          "microphonePermission": "Allow MicDrop to access your microphone for speaking practice.",
+          "microphonePermission": "Allow DropMic to access your microphone for speaking practice.",
           "enableBackgroundRecording": false
         }
       ]

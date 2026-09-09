@@ -2,6 +2,7 @@ import { describe, expect, it, jest } from '@jest/globals';
 
 import {
   createCompletionGate,
+  firstScreenAfterSplash,
   formatCountdownNumber,
   formatSpeakingTime,
   phaseForRecordingState,
@@ -23,6 +24,11 @@ describe('first-use flow', () => {
     expect(phaseForRecordingState('recording')).toBe('recording');
     expect(phaseForRecordingState('completed')).toBe('completion');
     expect(phaseForRecordingState('idle')).toBeNull();
+  });
+
+  it('requires only the age gate before the prompt on first use', () => {
+    expect(firstScreenAfterSplash(false)).toBe('age_gate');
+    expect(firstScreenAfterSplash(true)).toBe('topic_reveal');
   });
 
   it('fires the Solari completion callback once', () => {

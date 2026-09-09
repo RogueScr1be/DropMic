@@ -1,57 +1,37 @@
 import { useEffect, useState } from 'react';
 import { Animated, StyleSheet, Text, View } from 'react-native';
 
-import { SPLASH_DURATION_MS, createCompletionGate } from './first-use-flow';
+import { colors, spacing, typography } from '@/ui/theme';
 
 type SplashRevealProps = {
   reducedMotion: boolean;
-  onComplete: () => void;
 };
 
-export function SplashReveal({ reducedMotion, onComplete }: SplashRevealProps) {
-  const [opacity] = useState(() => new Animated.Value(0));
-  const [markScale] = useState(() => new Animated.Value(0.92));
+export function SplashReveal({ reducedMotion }: SplashRevealProps) {
+  const [opacity] = useState(() => new Animated.Value(reducedMotion ? 1 : 0));
 
   useEffect(() => {
-    const complete = createCompletionGate(onComplete);
-    let completionTimer: ReturnType<typeof setTimeout> | null = null;
     if (reducedMotion) {
-      completionTimer = setTimeout(complete, 0);
-      return () => {
-        if (completionTimer) clearTimeout(completionTimer);
-      };
+      opacity.setValue(1);
+      return undefined;
     }
 
-    const animation = Animated.parallel([
-      Animated.timing(opacity, { duration: 500, toValue: 1, useNativeDriver: true }),
-      Animated.spring(markScale, {
-        friction: 8,
-        tension: 60,
-        toValue: 1,
-        useNativeDriver: true,
-      }),
-    ]);
-    animation.start(({ finished }) => {
-      if (finished) {
-        completionTimer = setTimeout(complete, SPLASH_DURATION_MS - 500);
-      }
-    });
+    const animation = Animated.timing(opacity, { duration: 500, toValue: 1, useNativeDriver: true });
+    animation.start();
 
     return () => {
       animation.stop();
-      if (completionTimer) clearTimeout(completionTimer);
     };
-  }, [markScale, onComplete, opacity, reducedMotion]);
+  }, [opacity, reducedMotion]);
 
   return (
-    <View accessibilityLabel="MicDrop" accessibilityRole="text" style={styles.container}>
-      <Animated.View style={[styles.mark, { opacity, transform: [{ scale: markScale }] }]}>
-        <Text style={styles.kicker}>SPEAKING PRACTICE</Text>
-        <Text style={styles.wordmark}>MIC</Text>
-        <Text style={styles.wordmarkAccent}>DROP</Text>
+    <View accessibilityLabel="DropMic" accessibilityRole="text" style={styles.container} testID="splash-reveal">
+      <Animated.View style={[styles.mark, { opacity }]}>
+        <Text maxFontSizeMultiplier={1.5} style={styles.kicker}>ONE PROMPT. ONE TAKE.</Text>
+        <Text maxFontSizeMultiplier={1.35} style={styles.wordmark}>DropMic</Text>
         <View style={styles.signal} />
       </Animated.View>
-      <Text style={styles.footer}>ONE TAKE. YOUR VOICE.</Text>
+      <Text maxFontSizeMultiplier={1.5} style={styles.footer}>SPEAK IT THROUGH.</Text>
     </View>
   );
 }
@@ -59,21 +39,21 @@ export function SplashReveal({ reducedMotion, onComplete }: SplashRevealProps) {
 const styles = StyleSheet.create({
   container: {
     alignItems: 'center',
-    backgroundColor: '#071918',
+    backgroundColor: colors.inkStrong,
     flex: 1,
     justifyContent: 'center',
-    padding: 28,
+    padding: spacing.xxxl,
   },
   footer: {
     bottom: 36,
-    color: '#86a79d',
+    color: colors.coralSoft,
     fontSize: 11,
     fontWeight: '700',
     letterSpacing: 2.4,
     position: 'absolute',
   },
   kicker: {
-    color: '#86a79d',
+    color: colors.coralSoft,
     fontSize: 11,
     fontWeight: '700',
     letterSpacing: 3,
@@ -82,26 +62,11 @@ const styles = StyleSheet.create({
   },
   mark: { alignItems: 'center' },
   signal: {
-    backgroundColor: '#ff6b35',
+    backgroundColor: colors.coral,
     borderRadius: 99,
     height: 12,
     marginTop: 22,
     width: 12,
   },
-  wordmark: {
-    color: '#f4ebdd',
-    fontFamily: 'Georgia',
-    fontSize: 72,
-    fontWeight: '700',
-    letterSpacing: -5,
-    lineHeight: 72,
-  },
-  wordmarkAccent: {
-    color: '#ff6b35',
-    fontFamily: 'Georgia',
-    fontSize: 72,
-    fontWeight: '700',
-    letterSpacing: -5,
-    lineHeight: 72,
-  },
+  wordmark: { color: colors.background, fontFamily: typography.displayFamily, fontSize: 68, fontWeight: '700', letterSpacing: -3, lineHeight: 76 },
 });
