@@ -66,24 +66,42 @@ describe('Solari board contracts', () => {
     buildSolariGrid('Short prompt?').forEach((row) => expect(row).toHaveLength(SOLARI_COLUMN_COUNT));
   });
 
-  it('pads a 46-character prompt with four blank trailing tiles', () => {
+  it('wraps by whole words into the fixed tile grid', () => {
     const prompt = 'Which everyday invention deserves more credit?';
     const grid = buildSolariGrid(prompt);
 
     expect(Array.from(prompt)).toHaveLength(46);
     expect(grid.flat()).toHaveLength(SOLARI_TILE_COUNT);
-    expect(grid.flat().slice(46)).toEqual(['', '', '', '']);
+    expect(grid.map((row) => row.join(''))).toEqual([
+      'WHICH',
+      'EVERYDAY',
+      'INVENTION',
+      'DESERVES',
+      'MORE',
+    ]);
+    grid.forEach((row) => expect(row).toHaveLength(SOLARI_COLUMN_COUNT));
   });
 
-  it('keeps the natural prompt accessible without exposing spaces or blank cells', () => {
+  it('keeps common words intact instead of splitting them across rows', () => {
+    const grid = buildSolariGrid('What could you teach someone in ten minutes?');
+    const rows = grid.map((row) => row.join(''));
+
+    expect(rows).toContain('MINUTES?');
+    rows.forEach((row, index) => {
+      expect(row).not.toMatch(/MINU$|^TES/);
+      expect(grid[index]).toHaveLength(SOLARI_COLUMN_COUNT);
+    });
+  });
+
+  it('keeps the natural prompt accessible while rendering blank space tiles silently', () => {
     const prompt = 'A pause, then: go!';
     const tree = renderBoard(prompt);
     const board = tree.root.findByProps({ accessibilityLabel: `Speaking prompt: ${prompt}` });
-    const spaceTile = tree.root.findByProps({ testID: 'solari-tile-1' });
+    const emptyTile = tree.root.findByProps({ testID: 'solari-tile-1' });
 
     expect(board.props.accessibilityRole).toBe('text');
-    expect(spaceTile.findByType(Text).props.children).toBe('·');
-    expect(buildSolariGrid(prompt).flat()[13]).toBe(':');
+    expect(emptyTile.findByType(Text).props.children).toBe('');
+    expect(buildSolariGrid(prompt).flat()[4]).toBe('P');
   });
 
   it('retains the fixed grid after a reroll on the reduced-motion path', () => {

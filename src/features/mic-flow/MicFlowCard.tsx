@@ -12,21 +12,21 @@ export function MicFlowCard({ loading, snapshot }: { loading: boolean; snapshot:
     : !snapshot
       ? 'Unavailable'
       : presentation?.showCurrent
-        ? `Mic Flow: ${formatFlowCount(snapshot.current_flow)}`
+        ? `Flow: ${formatFlowCount(snapshot.current_flow)}`
         : presentation?.title;
 
   return (
     <View style={styles.card} testID={loading ? 'mic-flow-card-loading' : snapshot ? 'mic-flow-card' : 'mic-flow-card-unavailable'}>
       <Pressable
-        accessibilityHint={expanded ? 'Hides your Mic Flow details' : 'Shows your Mic Flow details'}
-        accessibilityLabel={expanded ? 'Collapse Mic Flow details' : 'Expand Mic Flow details'}
+        accessibilityHint={expanded ? 'Hides your Flow details' : 'Shows your Flow details'}
+        accessibilityLabel={expanded ? 'Collapse Flow details' : 'Expand Flow details'}
         accessibilityRole="button"
         accessibilityState={{ expanded }}
         aria-expanded={expanded}
         onPress={() => setExpanded((current) => !current)}
         style={({ pressed }) => [styles.summary, pressed && styles.pressed]}
         testID="mic-flow-toggle">
-        <Text style={styles.kicker}>MIC FLOW</Text>
+        <Text style={styles.kicker}>FLOW</Text>
         <Text accessibilityLiveRegion={loading ? 'polite' : 'none'} style={styles.summaryText}>{summary}</Text>
         <Text accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.disclosureMark}>
           {expanded ? '−' : '+'}
@@ -34,12 +34,12 @@ export function MicFlowCard({ loading, snapshot }: { loading: boolean; snapshot:
       </Pressable>
 
       {expanded && (
-        <View accessibilityLabel="Mic Flow details" style={styles.expandedDetails} testID="mic-flow-details">
+        <View accessibilityLabel="Flow details" style={styles.expandedDetails} testID="mic-flow-details">
           {loading ? (
-            <Text style={styles.unavailableTitle}>Checking your Mic Flow…</Text>
+            <Text style={styles.unavailableTitle}>Checking your Flow…</Text>
           ) : !snapshot || !presentation ? (
             <>
-              <Text style={styles.unavailableTitle}>Mic Flow is unavailable right now.</Text>
+              <Text style={styles.unavailableTitle}>Flow is unavailable right now.</Text>
               <Text style={styles.body}>We’ll check again when you’re connected.</Text>
             </>
           ) : (

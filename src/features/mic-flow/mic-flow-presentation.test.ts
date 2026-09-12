@@ -5,13 +5,13 @@ import { formatFlowCount, presentationForStatus } from './mic-flow-presentation'
 describe('Basic Mic Flow presentation', () => {
   it('uses exact copy for every server-derived snapshot state', () => {
     expect(presentationForStatus('not_started')).toEqual({
-      title: 'Start your Mic Flow.',
+      title: 'Start your Flow.',
       body: 'One completed recording starts your momentum.',
       showCurrent: false,
     });
-    expect(presentationForStatus('protected_today')).toMatchObject({ title: 'Your Mic Flow is alive.', showCurrent: true });
+    expect(presentationForStatus('protected_today')).toMatchObject({ title: 'Your Flow is alive.', showCurrent: true });
     expect(presentationForStatus('needs_rep_today')).toMatchObject({ title: 'Keep the mic hot. One rep today.', showCurrent: true });
-    expect(presentationForStatus('recoverable_with_save')).toMatchObject({ title: 'Your Mic Flow can still be saved.', showCurrent: true });
+    expect(presentationForStatus('recoverable_with_save')).toMatchObject({ title: 'Your Flow can still be saved.', showCurrent: true });
     expect(presentationForStatus('reset_pending')).toMatchObject({ title: 'Start the momentum again.', showCurrent: false });
   });
 

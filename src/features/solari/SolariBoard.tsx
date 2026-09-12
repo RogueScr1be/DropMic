@@ -2,7 +2,7 @@ import { useEffect, useMemo } from 'react';
 import { Animated, StyleSheet, Text, View } from 'react-native';
 
 import { createCompletionGate, shouldAnimateSolari } from '@/features/first-use/first-use-flow';
-import { colors, motion, radii, shadows, spacing, typography } from '@/ui/theme';
+import { colors, motion, radii, spacing, typography } from '@/ui/theme';
 import { useClackSound } from './solari-sound';
 
 type SolariBoardProps = {
@@ -17,8 +17,77 @@ export const SOLARI_ROW_COUNT = 5;
 export const SOLARI_COLUMN_COUNT = 10;
 export const SOLARI_TILE_COUNT = SOLARI_ROW_COUNT * SOLARI_COLUMN_COUNT;
 
+function splitLongWord(word: string) {
+  const chunks: string[] = [];
+  for (let index = 0; index < word.length; index += SOLARI_COLUMN_COUNT) {
+    chunks.push(word.slice(index, index + SOLARI_COLUMN_COUNT));
+  }
+  return chunks;
+}
+
+function justifyWords(words: string[], isLastLine: boolean) {
+  if (words.length === 0) {
+    return '';
+  }
+  if (words.length === 1 || isLastLine) {
+    return words.join(' ');
+  }
+
+  const characterCount = words.reduce((total, word) => total + word.length, 0);
+  const gapCount = words.length - 1;
+  const spacesToDistribute = Math.max(gapCount, SOLARI_COLUMN_COUNT - characterCount);
+  const baseSpaces = Math.floor(spacesToDistribute / gapCount);
+  let extraSpaces = spacesToDistribute % gapCount;
+
+  return words.reduce((line, word, index) => {
+    if (index === 0) {
+      return word;
+    }
+    const spaces = baseSpaces + (extraSpaces > 0 ? 1 : 0);
+    extraSpaces -= extraSpaces > 0 ? 1 : 0;
+    return `${line}${' '.repeat(spaces)}${word}`;
+  }, '');
+}
+
+function wrapSolariPrompt(prompt: string) {
+  const words = prompt
+    .toUpperCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .flatMap((word) => word.length > SOLARI_COLUMN_COUNT ? splitLongWord(word) : word)
+    .filter(Boolean);
+  const lines: string[][] = [];
+  let currentLine: string[] = [];
+  let currentLength = 0;
+
+  words.forEach((word) => {
+    const nextLength = currentLine.length === 0 ? word.length : currentLength + 1 + word.length;
+    if (currentLine.length > 0 && nextLength > SOLARI_COLUMN_COUNT) {
+      lines.push(currentLine);
+      currentLine = [word];
+      currentLength = word.length;
+      return;
+    }
+    currentLine.push(word);
+    currentLength = nextLength;
+  });
+
+  if (currentLine.length > 0) {
+    lines.push(currentLine);
+  }
+
+  return lines.slice(0, SOLARI_ROW_COUNT).map((line, index, wrappedLines) => justifyWords(line, index === wrappedLines.length - 1));
+}
+
 export function buildSolariGrid(prompt: string): string[][] {
-  const characters = Array.from(prompt.toUpperCase());
+  const characters = wrapSolariPrompt(prompt).flatMap((line) => {
+    const lineCharacters = Array.from(line).slice(0, SOLARI_COLUMN_COUNT);
+    return [
+      ...lineCharacters,
+      ...Array<string>(SOLARI_COLUMN_COUNT - lineCharacters.length).fill(''),
+    ];
+  });
   if (characters.length > SOLARI_TILE_COUNT) {
     throw new Error(`Solari prompt exceeds ${SOLARI_TILE_COUNT} positions.`);
   }
@@ -37,12 +106,19 @@ export function SolariBoard({
   onComplete,
 }: SolariBoardProps) {
   const playClack = useClackSound(true);
-  const promptCharacters = useMemo(() => Array.from(prompt.toUpperCase()), [prompt]);
   const rows = useMemo(() => buildSolariGrid(prompt), [prompt]);
   const characters = useMemo(() => rows.flat(), [rows]);
+  const animatedTileCount = useMemo(() => {
+    for (let index = characters.length - 1; index >= 0; index -= 1) {
+      if (characters[index] !== '') {
+        return index + 1;
+      }
+    }
+    return 0;
+  }, [characters]);
   const flipValues = useMemo(
-    () => characters.map((_, index) => new Animated.Value(reducedMotion || index >= promptCharacters.length ? 1 : 0)),
-    [characters, promptCharacters.length, reducedMotion],
+    () => characters.map((_, index) => new Animated.Value(reducedMotion || index >= animatedTileCount ? 1 : 0)),
+    [animatedTileCount, characters, reducedMotion],
   );
 
   useEffect(() => {
@@ -51,7 +127,7 @@ export function SolariBoard({
     const timers: ReturnType<typeof setTimeout>[] = [];
     const showStatic = !shouldAnimateSolari(reducedMotion);
 
-    flipValues.forEach((value, index) => value.setValue(showStatic || index >= promptCharacters.length ? 1 : 0));
+    flipValues.forEach((value, index) => value.setValue(showStatic || index >= animatedTileCount ? 1 : 0));
 
     if (showStatic) {
       const timer = setTimeout(complete, 0);
@@ -63,10 +139,10 @@ export function SolariBoard({
     }
 
     try {
-      promptCharacters.forEach((_, index) => {
+      characters.slice(0, animatedTileCount).forEach((character, index) => {
         timers.push(
           setTimeout(() => {
-            if (!cancelled) {
+            if (!cancelled && character !== '') {
               playClack();
             }
           }, index * motion.solariStagger),
@@ -75,12 +151,24 @@ export function SolariBoard({
 
       Animated.stagger(
         motion.solariStagger,
-        flipValues.slice(0, promptCharacters.length).map((value) =>
-          Animated.timing(value, {
-            duration: 150,
-            toValue: 1,
-            useNativeDriver: true,
-          }),
+        flipValues.slice(0, animatedTileCount).map((value) =>
+          Animated.sequence([
+            Animated.timing(value, {
+              duration: 48,
+              toValue: 0.52,
+              useNativeDriver: true,
+            }),
+            Animated.timing(value, {
+              duration: 34,
+              toValue: 0.86,
+              useNativeDriver: true,
+            }),
+            Animated.timing(value, {
+              duration: 42,
+              toValue: 1,
+              useNativeDriver: true,
+            }),
+          ]),
         ),
       ).start(({ finished }) => {
         if (finished && !cancelled) {
@@ -99,7 +187,7 @@ export function SolariBoard({
       timers.forEach(clearTimeout);
       flipValues.forEach((value) => value.stopAnimation());
     };
-  }, [flipValues, onComplete, playClack, promptCharacters, reducedMotion, revealKey]);
+  }, [animatedTileCount, characters, flipValues, onComplete, playClack, reducedMotion, revealKey]);
 
   return (
     <View
@@ -131,7 +219,13 @@ export function SolariBoard({
                         {
                           rotateX: flipValues[index].interpolate({
                             inputRange: [0, 0.5, 1],
-                            outputRange: ['0deg', '-88deg', '0deg'],
+                            outputRange: ['0deg', '-94deg', '0deg'],
+                          }),
+                        },
+                        {
+                          scaleY: flipValues[index].interpolate({
+                            inputRange: [0, 0.5, 0.86, 1],
+                            outputRange: [1, 0.92, 1.05, 1],
                           }),
                         },
                       ],
@@ -146,7 +240,7 @@ export function SolariBoard({
                       density === 'tablet' && styles.characterTablet,
                       character === ' ' && styles.wordSpace,
                     ]}>
-                    {character === ' ' ? '·' : character}
+                    {character === ' ' ? '' : character}
                   </Text>
                   <View style={styles.cellDivider} />
                 </Animated.View>
@@ -163,19 +257,16 @@ export function SolariBoard({
 const styles = StyleSheet.create({
   board: {
     alignSelf: 'stretch',
-    backgroundColor: colors.board,
-    borderColor: colors.boardRail,
+    backgroundColor: colors.background,
     borderRadius: radii.lg,
-    borderWidth: 1,
-    gap: spacing.sm,
-    padding: spacing.lg,
-    ...shadows.card,
+    gap: spacing.xs,
+    padding: 0,
   },
-  boardCompact: { gap: spacing.xs, padding: spacing.md },
+  boardCompact: { gap: spacing.xs },
   boardRail: {
-    backgroundColor: colors.boardRail,
+    backgroundColor: colors.border,
     height: 2,
-    opacity: 0.6,
+    opacity: 0.7,
   },
   grid: {
     gap: spacing.xs,
@@ -183,21 +274,20 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     gap: spacing.xs,
-    justifyContent: 'center',
   },
   cell: {
     alignItems: 'center',
     backgroundColor: colors.boardCell,
     borderColor: colors.boardCellBorder,
-    borderRadius: 4,
+    borderRadius: 6,
     borderWidth: 1,
-    height: 42,
+    flex: 1,
+    height: 50,
     justifyContent: 'center',
     overflow: 'hidden',
-    width: 28,
   },
-  cellCompact: { height: 28, width: 36 },
-  cellTablet: { height: 58, width: 52 },
+  cellCompact: { height: 34 },
+  cellTablet: { height: 68 },
   cellDivider: {
     backgroundColor: colors.boardCellBorder,
     height: 1,
@@ -210,10 +300,12 @@ const styles = StyleSheet.create({
   character: {
     color: colors.inkStrong,
     fontFamily: typography.displayFamily,
-    fontSize: 20,
-    fontWeight: '700',
+    fontSize: 31,
+    fontWeight: '900',
+    includeFontPadding: false,
+    lineHeight: 34,
   },
-  characterCompact: { fontSize: 16 },
-  characterTablet: { fontSize: 24 },
-  wordSpace: { color: colors.boardCellBorder },
+  characterCompact: { fontSize: 21, lineHeight: 24 },
+  characterTablet: { fontSize: 43, lineHeight: 48 },
+  wordSpace: { color: 'transparent' },
 });

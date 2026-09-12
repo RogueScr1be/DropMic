@@ -14,13 +14,13 @@ export function presentationForStatus(status: MicFlowSnapshotStatus): MicFlowPre
   switch (status) {
     case 'not_started':
       return {
-        title: 'Start your Mic Flow.',
+        title: 'Start your Flow.',
         body: 'One completed recording starts your momentum.',
         showCurrent: false,
       };
     case 'protected_today':
       return {
-        title: 'Your Mic Flow is alive.',
+        title: 'Your Flow is alive.',
         body: 'Come back tomorrow to keep the momentum going.',
         showCurrent: true,
       };
@@ -32,7 +32,7 @@ export function presentationForStatus(status: MicFlowSnapshotStatus): MicFlowPre
       };
     case 'recoverable_with_save':
       return {
-        title: 'Your Mic Flow can still be saved.',
+        title: 'Your Flow can still be saved.',
         body: 'Complete today’s rep to use a Mic Save.',
         showCurrent: true,
       };

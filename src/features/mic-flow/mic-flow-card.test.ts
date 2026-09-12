@@ -32,7 +32,7 @@ describe('MicFlowCard', () => {
     });
     const toggle = tree!.root.findByProps({ testID: 'mic-flow-toggle' });
     expect(toggle.props.accessibilityState).toEqual({ expanded: false });
-    expect(textContent(tree!.toJSON())).toContain('Mic Flow: 2 days');
+    expect(textContent(tree!.toJSON())).toContain('Flow: 2 days');
     expect(textContent(tree!.toJSON())).not.toContain('Keep the mic hot. One rep today.');
 
     act(() => toggle.props.onPress());
@@ -57,7 +57,7 @@ describe('MicFlowCard', () => {
     expect(unavailable).not.toContain('0 days');
 
     act(() => unavailableTree!.root.findByProps({ testID: 'mic-flow-toggle' }).props.onPress());
-    expect(textContent(unavailableTree!.toJSON())).toContain('Mic Flow is unavailable right now.');
+    expect(textContent(unavailableTree!.toJSON())).toContain('Flow is unavailable right now.');
     expect(textContent(unavailableTree!.toJSON())).not.toContain('0 days');
   });
 
@@ -72,8 +72,8 @@ describe('MicFlowCard', () => {
     act(() => tree!.root.findByProps({ testID: 'mic-flow-toggle' }).props.onPress());
     const text = textContent(tree!.toJSON());
     expect(text).toContain('13 days');
-    expect(text).not.toContain('Mic Flow: 8 days');
+    expect(text).not.toContain('Flow: 8 days');
     expect(text).not.toMatch(/alive|protected/i);
-    expect(text).not.toContain('Mic Flow: 0 days');
+    expect(text).not.toContain('Flow: 0 days');
   });
 });

@@ -5,6 +5,7 @@ import {
   requestRecordingPermissionsAsync,
   setAudioModeAsync,
   useAudioPlayer,
+  useAudioPlayerStatus,
   useAudioRecorder,
   useAudioRecorderState,
   RecordingPresets,
@@ -30,7 +31,9 @@ export function useLocalAudioRecorder() {
   });
   const recorderState = useAudioRecorderState(recorder, 200);
   const player = useAudioPlayer();
+  const playerStatus = useAudioPlayerStatus(player);
   const lastPlayerUri = useRef<string | null>(null);
+  const [isPlaybackPlaying, setIsPlaybackPlaying] = useState(false);
   const recorderPhase = useRef<'idle' | 'prepared' | 'recording' | 'paused' | 'finalized'>('idle');
   const finalizedUri = useRef<string | null>(null);
   const retainedUris = useRef(new Set<string>());
@@ -42,6 +45,12 @@ export function useLocalAudioRecorder() {
   useEffect(() => {
     void getRecordingPermissionsAsync().then((permission) => setPermissionGranted(permission.granted));
   }, []);
+
+  useEffect(() => {
+    if (lastPlayerUri.current) {
+      setIsPlaybackPlaying(Boolean(playerStatus.playing) && !playerStatus.didJustFinish);
+    }
+  }, [playerStatus.didJustFinish, playerStatus.playing]);
 
   const requestPermission = useCallback(async () => {
     const permission = await requestRecordingPermissionsAsync();
@@ -123,9 +132,18 @@ export function useLocalAudioRecorder() {
       }
       await player.seekTo(0);
       player.play();
+      setIsPlaybackPlaying(true);
     },
     [player],
   );
+
+  const pausePlayback = useCallback(async () => {
+    if (!lastPlayerUri.current) {
+      return;
+    }
+    player.pause();
+    setIsPlaybackPlaying(false);
+  }, [player]);
 
   const stopPlayback = useCallback(async () => {
     if (!lastPlayerUri.current) {
@@ -133,6 +151,7 @@ export function useLocalAudioRecorder() {
     }
     try {
       player.pause();
+      setIsPlaybackPlaying(false);
       await Promise.resolve(player.seekTo(0)).catch(() => undefined);
       player.remove();
       lastPlayerUri.current = null;
@@ -228,6 +247,7 @@ export function useLocalAudioRecorder() {
     permissionGranted,
     isRecording: recorderState.isRecording,
     mediaServicesDidReset: recorderState.mediaServicesDidReset,
+    isPlaybackPlaying,
     error,
     uri: recorder.uri,
     requestPermission,
@@ -237,6 +257,7 @@ export function useLocalAudioRecorder() {
     resume,
     finalize,
     play,
+    pausePlayback,
     stopPlayback,
     deleteRecording: deleteRetainedRecording,
     discardTransientRecording,

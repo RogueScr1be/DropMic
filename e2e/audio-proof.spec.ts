@@ -243,7 +243,7 @@ test('runs the local first-use loop and keeps the recording on-device', async ({
   await page.getByRole('button', { name: 'Let’s Go!' }).click();
   await startThirtySecondRecording(page);
 
-  await expect(page.getByRole('heading', { name: 'That’s a take.' })).toBeVisible({ timeout: 40_000 });
+  await expect(page.getByRole('heading', { name: 'Great Job!' })).toBeVisible({ timeout: 40_000 });
   const recordingUri = await page.getByTestId('recording-uri').textContent();
   expect(recordingUri).toMatch(/^blob:/);
   const recordingMetadata = await page.evaluate(async (uri) => {
@@ -271,12 +271,13 @@ test('runs the local first-use loop and keeps the recording on-device', async ({
   await page.getByRole('button', { name: 'Keep Saved Take' }).click();
   await expect(page.getByTestId('topic-reveal')).toBeVisible();
   await page.getByRole('button', { name: 'Resume saved take' }).click();
-  await expect(page.getByRole('heading', { name: 'That’s a take.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Great Job!' })).toBeVisible();
   await expect(page.getByTestId('recording-uri')).toHaveText(recordingUri ?? '');
   expect((await audioProof(page)).revokedUrls).toHaveLength(0);
   expect(networkProof.flowCompletionRequests).toHaveLength(1);
 
   await page.getByRole('button', { name: 'Play recording' }).click();
+  await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();
   await expect.poll(async () => (await audioProof(page)).playbackEvents).toContain('play');
   await page.getByRole('button', { name: 'Close completed take' }).click();
   await expect(page.getByTestId('topic-reveal')).toBeVisible();
@@ -321,7 +322,7 @@ test('pauses and resumes one recorder without counting paused wall time', async 
   await expect(page.locator('[aria-live="polite"]').first()).toHaveText(pausedRemaining ?? '');
   await page.getByRole('button', { name: 'Resume' }).click();
 
-  await expect(page.getByRole('heading', { name: 'That’s a take.' })).toBeVisible({ timeout: 40_000 });
+  await expect(page.getByRole('heading', { name: 'Great Job!' })).toBeVisible({ timeout: 40_000 });
   const proof = await audioProof(page);
   expect(proof.recorderConstructed).toBe(1);
   expect(proof.recorderEvents).toEqual(['start', 'pause', 'resume', 'stop']);
@@ -384,7 +385,7 @@ test('preserves on early cancel release and revokes once on confirmed cancellati
   expect(stoppedTracks).toContain('audio');
   expect(networkProof.flowCompletionRequests).toHaveLength(0);
   expect(networkProof.storageRequests).toHaveLength(0);
-  await expect(page.getByRole('heading', { name: 'That’s a take.' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Great Job!' })).toHaveCount(0);
 });
 
 test('background interruption and reload stop active media without completion or Flow', async ({ page }) => {
@@ -400,7 +401,7 @@ test('background interruption and reload stop active media without completion or
     document.dispatchEvent(new Event('visibilitychange'));
   });
   await expect(page.getByRole('heading', { name: 'A pause, not a problem.' })).toBeVisible({ timeout: 8_000 });
-  await expect(page.getByRole('heading', { name: 'That’s a take.' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Great Job!' })).toHaveCount(0);
   expect(stoppedTracks).toContain('audio');
 
   await page.evaluate(() => {

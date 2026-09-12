@@ -63,6 +63,8 @@ import { colors, radii, spacing, typography } from '@/ui/theme';
 
 type ExperiencePhase = FirstUsePhase | 'interrupted' | 'error';
 
+const COMPLETION_HEADLINES = ['Great Job!'] as const;
+
 export default function AudioProofScreen() {
   const audio = useLocalAudioRecorder();
   const { auth } = useLocalSearchParams<{ auth?: string }>();
@@ -98,7 +100,6 @@ export default function AudioProofScreen() {
   const [micFlowSnapshot, setMicFlowSnapshot] = useState<MicFlowSnapshot | null>(null);
   const [micFlowSnapshotLoading, setMicFlowSnapshotLoading] = useState(false);
   const [micFlowSavePromptVisible, setMicFlowSavePromptVisible] = useState(false);
-  const [micFlowCompletionMessage, setMicFlowCompletionMessage] = useState<string | null>(null);
   const [retainedCompletedTake, setRetainedCompletedTake] = useState<LocalCompletedTake | null>(null);
   const [completedTakeHidden, setCompletedTakeHidden] = useState(false);
   const [retainedTakeStartPromptVisible, setRetainedTakeStartPromptVisible] = useState(false);
@@ -214,7 +215,6 @@ export default function AudioProofScreen() {
     micFlowSnapshotRequestRef.current += 1;
     setMicFlowSnapshot(null);
     setMicFlowSnapshotLoading(Boolean(nextOwnerId));
-    setMicFlowCompletionMessage(null);
     if (captured && captured.userId !== nextOwnerId) {
       setMicFlowStatus('unprotected');
     }
@@ -309,28 +309,22 @@ export default function AudioProofScreen() {
       if (result.status === 'save_decision_required') {
         setMicFlowStatus('save_decision_required');
         setMicFlowSavePromptVisible(true);
-        setMicFlowCompletionMessage(null);
       } else if (result.status === 'credited' || result.status === 'already_credited' || result.status === 'same_day') {
         setMicFlowStatus('protected');
         setMicFlowSavePromptVisible(false);
-        setMicFlowCompletionMessage(result.status === 'credited' ? 'Mic Flow protected.' : 'Today’s Mic Flow is already protected.');
         void refreshMicFlowSnapshot({ force: true, ownerId: pending.identity.userId });
       } else if (result.status === 'unavailable' && (result.reason === 'not_configured' || result.reason === 'unowned' || result.reason === 'stale_identity')) {
         setMicFlowStatus('unprotected');
         setMicFlowSavePromptVisible(false);
-        setMicFlowCompletionMessage(null);
       } else if (result.status === 'unavailable' && useSave !== null) {
         setMicFlowStatus('save_decision_required');
         setMicFlowSavePromptVisible(true);
-        setMicFlowCompletionMessage(null);
       } else {
         setMicFlowStatus('idle');
-        setMicFlowCompletionMessage(null);
       }
     } catch {
       setMicFlowStatus('unprotected');
       setMicFlowSavePromptVisible(false);
-      setMicFlowCompletionMessage(null);
     } finally {
       micFlowDecisionInFlight.current = false;
     }
@@ -406,7 +400,6 @@ export default function AudioProofScreen() {
     pendingMicFlowCompletionRef.current = null;
     micFlowCompletionRef.current = null;
     recordingOwnerIdRef.current = null;
-    setMicFlowCompletionMessage(null);
     takeIdentityRef.current = nextTakeIdentity;
     setTakeIdentity(nextTakeIdentity);
     setServerAttemptId(null);
@@ -895,7 +888,6 @@ export default function AudioProofScreen() {
     micFlowIdentityRef.current = null;
     pendingMicFlowCompletionRef.current = null;
     micFlowCompletionRef.current = null;
-    setMicFlowCompletionMessage(null);
     setTopic((currentTopic) => selectNextTopic(currentTopic.id, Date.now() + revealKey + 1));
     setRevealKey((currentKey) => currentKey + 1);
     setTakeTwoBaselineRunId(null);
@@ -1144,14 +1136,19 @@ export default function AudioProofScreen() {
 
                 {displayedPhase === 'completion' && recordingUri && (
           <CompletionView
-            completedAtMs={completedAtMs}
-            elapsed={elapsedMs}
-            micFlowCompletionMessage={micFlowCompletionMessage}
+            flowCard={(
+              <View style={styles.flowColumnStacked} testID="flow-region">
+                <MicFlowCard loading={micFlowSnapshotLoading} snapshot={micFlowSnapshot} />
+              </View>
+            )}
+            headline={COMPLETION_HEADLINES[0]}
+            isPlaybackPlaying={audio.isPlaybackPlaying}
             micFlowSavePromptVisible={micFlowSavePromptVisible}
             micFlowStatus={micFlowStatus}
             onMicFlowSaveDecision={(useSave) => void submitMicFlowCompletion(useSave)}
             onDelete={() => void deleteAttempt()}
             onDismiss={() => void closeCompletedTake()}
+            onPause={() => void audio.pausePlayback().catch(() => undefined)}
             onPlay={() =>
               void audio.play(recordingUri).catch((playError) => {
                 setActionError(playError instanceof Error ? playError.message : 'Unable to play recording.');
@@ -1163,12 +1160,11 @@ export default function AudioProofScreen() {
             prompt={topic.prompt}
             recordingUri={recordingUri}
             reducedMotion={reducedMotion}
-            selectedDuration={selectedDurationSeconds}
           />
                 )}
               </View>
 
-              {displayedPhase !== 'topic_reveal' && displayedPhase !== 'recording' && displayedPhase !== 'countdown' && (
+              {displayedPhase !== 'topic_reveal' && displayedPhase !== 'recording' && displayedPhase !== 'countdown' && displayedPhase !== 'completion' && (
                 <View
                   style={[styles.flowColumn, !layout.useTwoColumns && styles.flowColumnStacked]}
                   testID="flow-region">
@@ -1244,6 +1240,7 @@ function TopicReveal({
         accessibilityHint="Shows a different local prompt"
         label="New Drop!"
         onPress={onNewDrop}
+        emphasizedBorder
         secondary
       />
       <SolariBoard
@@ -1253,13 +1250,13 @@ function TopicReveal({
         reducedMotion={reducedMotion}
         revealKey={revealKey}
       />
-      {flowCard}
       <ActionButton
         accessibilityHint="Opens recording preparation for this prompt"
         label="Let’s Go!"
         onPress={onContinue}
         testID="prompt-continue"
       />
+      {flowCard}
     </View>
   );
 }
@@ -1442,37 +1439,37 @@ function RecordingPulse({ isPaused, reducedMotion }: { isPaused: boolean; reduce
 }
 
 function CompletionView({
-  completedAtMs,
-  elapsed,
-  micFlowCompletionMessage,
+  flowCard,
+  headline,
+  isPlaybackPlaying,
   micFlowSavePromptVisible,
   micFlowStatus,
   onMicFlowSaveDecision,
   onDelete,
   onDismiss,
+  onPause,
   onPlay,
   onQuickRead,
   onRetry,
   prompt,
   recordingUri,
   reducedMotion,
-  selectedDuration,
 }: {
-  completedAtMs: number | null;
-  elapsed: number;
-  micFlowCompletionMessage: string | null;
+  flowCard: ReactNode;
+  headline: string;
+  isPlaybackPlaying: boolean;
   micFlowSavePromptVisible: boolean;
   micFlowStatus: 'idle' | 'pending' | 'protected' | 'unprotected' | 'save_decision_required';
   onMicFlowSaveDecision: (useSave: boolean) => void;
   onDelete: () => void;
   onDismiss: () => void;
+  onPause: () => void;
   onPlay: () => void;
   onQuickRead: () => void;
   onRetry: () => void;
   prompt: string;
   recordingUri: string;
   reducedMotion: boolean;
-  selectedDuration: RecordingDuration;
 }) {
   return (
     <>
@@ -1490,22 +1487,18 @@ function CompletionView({
           </Pressable>
         </View>
         <CompletionMark reducedMotion={reducedMotion} />
-        <Text accessibilityRole="header" style={styles.heroTitle}>That’s a take.</Text>
-        <Text style={styles.completionMeta}>{formatSpeakingTime(elapsed)} captured · {selectedDuration}s setting</Text>
-        <Text accessibilityElementsHidden style={styles.completionMeta}>Completed at {completedAtMs ?? 'local time'}</Text>
-        {micFlowStatus === 'pending' && !micFlowSavePromptVisible && <Text accessibilityLiveRegion="polite" style={styles.completionMeta}>Protecting your Mic Flow…</Text>}
-        {micFlowCompletionMessage && <Text accessibilityLiveRegion="polite" style={styles.completionMeta}>{micFlowCompletionMessage}</Text>}
-        {micFlowStatus === 'unprotected' && <Text accessibilityLiveRegion="polite" style={styles.errorText}>Connect to protect your Mic Flow.</Text>}
+        <Text accessibilityRole="header" style={styles.heroTitle}>{headline}</Text>
         <Text accessibilityElementsHidden style={styles.recordingMetadata} testID="recording-uri">{recordingUri}</Text>
         <PromptCard prompt={prompt} />
         <View style={styles.actionStack}>
-          <ActionButton label="Play recording" onPress={onPlay} />
-          <ActionButton label="Get a Quick Read" onPress={onQuickRead} secondary />
+          <ActionButton label="Get a Quick Read" onPress={onQuickRead} />
+          <ActionButton label={isPlaybackPlaying ? 'Pause' : 'Play recording'} onPress={isPlaybackPlaying ? onPause : onPlay} secondary />
           <View style={styles.secondaryRow}>
             <ActionButton compact label="Retry recording" onPress={onRetry} secondary />
             <ActionButton compact label="Delete recording" onPress={onDelete} secondary />
           </View>
         </View>
+        {flowCard}
       </View>
       <MicFlowSavePrompt
         disabled={micFlowStatus === 'pending'}

@@ -6,6 +6,7 @@ export function ActionButton({
   accessibilityHint,
   compact = false,
   disabled = false,
+  emphasizedBorder = false,
   label,
   onPress,
   secondary = false,
@@ -14,6 +15,7 @@ export function ActionButton({
   accessibilityHint?: string;
   compact?: boolean;
   disabled?: boolean;
+  emphasizedBorder?: boolean;
   label: string;
   onPress: () => void;
   secondary?: boolean;
@@ -32,6 +34,7 @@ export function ActionButton({
         styles.button,
         compact && styles.compact,
         secondary && styles.secondary,
+        emphasizedBorder && styles.emphasizedBorder,
         pressed && styles.pressed,
         disabled && styles.disabled,
       ]}>
@@ -44,6 +47,7 @@ const styles = StyleSheet.create({
   button: { alignItems: 'center', backgroundColor: colors.ink, borderColor: colors.ink, borderRadius: radii.md, borderWidth: 1, justifyContent: 'center', minHeight: 60, paddingHorizontal: spacing.xl, width: '100%' },
   compact: { flex: 1, minHeight: minimumTouchTarget, width: undefined },
   secondary: { backgroundColor: 'transparent', borderColor: colors.border },
+  emphasizedBorder: { borderColor: colors.inkStrong },
   label: { color: colors.white, textAlign: 'center', ...typography.label },
   secondaryLabel: { color: colors.ink },
   pressed: { opacity: 0.72 },

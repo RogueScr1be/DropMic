@@ -148,7 +148,7 @@ export function SignupFlow({
       <View style={styles.backdrop}>
         <ScrollView contentContainerStyle={styles.scrollContent} style={styles.sheet}>
           <View style={styles.headerRow}>
-            <Text style={styles.kicker}>QUICK READ SETUP</Text>
+            <Text style={styles.kicker}>DROPMIC</Text>
             <Pressable accessibilityLabel="Close account setup" accessibilityRole="button" onPress={close} style={styles.closeButton}>
               <Text style={styles.closeText}>Close</Text>
             </Pressable>
@@ -156,8 +156,8 @@ export function SignupFlow({
 
           {activeStep === 'explanation' && (
             <>
-              <Text accessibilityRole="header" style={styles.title}>Keep this take with you.</Text>
-              <Text style={styles.body}>Create an account to save the prompt, duration, and completed time. Your recording stays on this device and is not uploaded or analyzed.</Text>
+              <Text accessibilityRole="header" style={styles.title}>Sign Up for DropMic</Text>
+              <Text style={styles.body}>Improve your speaking and social skills, 60 seconds at a time. Ready for your first Read?</Text>
               <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: ageGateConfirmed }} onPress={() => setAgeGateConfirmed(!ageGateConfirmed)} style={styles.checkboxRow}>
                 <View style={[styles.checkbox, ageGateConfirmed && styles.checkboxChecked]}>{ageGateConfirmed && <Text style={styles.checkmark}>✓</Text>}</View>
                 <Text style={styles.checkboxLabel}>I confirm I am 13 or older.</Text>

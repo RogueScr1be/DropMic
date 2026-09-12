@@ -48,13 +48,13 @@ test('keeps first use gated, user-driven, and stable through responsive changes'
   await expect(page.getByText(/drop ready/i)).toHaveCount(0);
   await expect(page.getByTestId(/^solari-row-/)).toHaveCount(5);
   await expect(page.getByTestId(/^solari-tile-/)).toHaveCount(50);
-  const flowToggle = page.getByRole('button', { name: 'Expand Mic Flow details' });
+  const flowToggle = page.getByRole('button', { name: 'Expand Flow details' });
   await expect(flowToggle).toHaveAttribute('aria-expanded', 'false');
   await expect(page.getByTestId('mic-flow-details')).toBeHidden();
 
   const requestsBeforeFlowToggle = await page.evaluate(() => performance.getEntriesByType('resource').length);
   await flowToggle.click();
-  await expect(page.getByRole('button', { name: 'Collapse Mic Flow details' })).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.getByRole('button', { name: 'Collapse Flow details' })).toHaveAttribute('aria-expanded', 'true');
   await expect(page.getByTestId('mic-flow-details')).toBeVisible();
   expect(await page.evaluate(() => performance.getEntriesByType('resource').length)).toBe(requestsBeforeFlowToggle);
 
@@ -80,15 +80,15 @@ test('keeps first use gated, user-driven, and stable through responsive changes'
   expect((landscapeFlow?.x ?? 0) + (landscapeFlow?.width ?? 0)).toBeGreaterThanOrEqual(
     (landscapeBoard?.x ?? 0) + (landscapeBoard?.width ?? 0) - 1,
   );
-  expect(landscapeFlow?.y).toBeGreaterThan((landscapeBoard?.y ?? 0) + (landscapeBoard?.height ?? 0));
-  expect(landscapeAction?.y).toBeGreaterThan((landscapeFlow?.y ?? 0) + (landscapeFlow?.height ?? 0));
-  await expect(page.getByRole('button', { name: 'Collapse Mic Flow details' })).toHaveAttribute('aria-expanded', 'true');
+  expect(landscapeAction?.y).toBeGreaterThan((landscapeBoard?.y ?? 0) + (landscapeBoard?.height ?? 0));
+  expect(landscapeFlow?.y).toBeGreaterThan((landscapeAction?.y ?? 0) + (landscapeAction?.height ?? 0));
+  await expect(page.getByRole('button', { name: 'Collapse Flow details' })).toHaveAttribute('aria-expanded', 'true');
   await expect(page.getByRole('button', { name: 'Let’s Go!' })).toBeVisible();
 
   await page.setViewportSize({ height: 844, width: 390 });
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  await page.getByRole('button', { name: 'Collapse Mic Flow details' }).click();
-  await expect(page.getByRole('button', { name: 'Expand Mic Flow details' })).toHaveAttribute('aria-expanded', 'false');
+  await page.getByRole('button', { name: 'Collapse Flow details' }).click();
+  await expect(page.getByRole('button', { name: 'Expand Flow details' })).toHaveAttribute('aria-expanded', 'false');
 
   await page.getByRole('button', { name: 'Let’s Go!' }).click();
   await expect(page.getByRole('radio', { name: '30 seconds' })).toBeVisible();
