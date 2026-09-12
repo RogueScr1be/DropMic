@@ -7,6 +7,8 @@ import {
   formatSpeakingTime,
   phaseForRecordingState,
   PREPARATION_COUNTDOWN_MS,
+  recoveryPresentationForState,
+  recordingStartDecision,
   shouldPlayClack,
 } from './first-use-flow';
 
@@ -22,6 +24,9 @@ describe('first-use flow', () => {
   it('maps recording states into experience phases', () => {
     expect(phaseForRecordingState('countdown')).toBe('countdown');
     expect(phaseForRecordingState('recording')).toBe('recording');
+    expect(phaseForRecordingState('paused')).toBe('recording');
+    expect(phaseForRecordingState('completing')).toBe('recording');
+    expect(phaseForRecordingState('cancelling')).toBe('recording');
     expect(phaseForRecordingState('completed')).toBe('completion');
     expect(phaseForRecordingState('idle')).toBeNull();
   });
@@ -44,5 +49,51 @@ describe('first-use flow', () => {
   it('supports a sound-disabled path', () => {
     expect(shouldPlayClack(true)).toBe(true);
     expect(shouldPlayClack(false)).toBe(false);
+  });
+
+  it('prioritizes retained-take recovery over auth recovery', () => {
+    expect(recoveryPresentationForState({
+      hasAuthRecovery: true,
+      hasHiddenCompletedTake: false,
+      hasRetainedCompletedTake: true,
+    })).toBe('retained-take');
+    expect(recoveryPresentationForState({
+      hasAuthRecovery: true,
+      hasHiddenCompletedTake: true,
+      hasRetainedCompletedTake: false,
+    })).toBe('retained-take');
+    expect(recoveryPresentationForState({
+      hasAuthRecovery: true,
+      hasHiddenCompletedTake: false,
+      hasRetainedCompletedTake: false,
+    })).toBe('auth-recovery');
+    expect(recoveryPresentationForState({
+      hasAuthRecovery: false,
+      hasHiddenCompletedTake: false,
+      hasRetainedCompletedTake: false,
+    })).toBeNull();
+  });
+
+  it('blocks new recording while retained-take hydration is unresolved', () => {
+    expect(recordingStartDecision({
+      hasRetainedTake: false,
+      replaceRetainedTake: false,
+      retainedTakeHydrating: true,
+    })).toBe('wait-for-retained-take-hydration');
+    expect(recordingStartDecision({
+      hasRetainedTake: true,
+      replaceRetainedTake: false,
+      retainedTakeHydrating: false,
+    })).toBe('confirm-retained-take-replacement');
+    expect(recordingStartDecision({
+      hasRetainedTake: true,
+      replaceRetainedTake: true,
+      retainedTakeHydrating: false,
+    })).toBe('start');
+    expect(recordingStartDecision({
+      hasRetainedTake: false,
+      replaceRetainedTake: false,
+      retainedTakeHydrating: false,
+    })).toBe('start');
   });
 });

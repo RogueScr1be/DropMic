@@ -546,29 +546,32 @@ Rollback boundary: one D1 commit. Revert that commit to restore the old shell/ph
 
 Objective: replace finalize-on-Stop with same-object pause/resume, count down active recorded time, add hold cancellation, and make local completion/deletion ordering deterministic. Do not alter Flow SQL or Quick Read provider behavior.
 
-Status after UI-D1 acceptance: deferred and not implemented.
+Status after UI-D2 implementation: implemented as an uncommitted local change pending acceptance. Stop now pauses, Resume continues the same Expo recorder/file, countdown displays remaining active time, and completion is not exposed until local recovery metadata is saved and read back. No Flow SQL, Quick Read provider, auth conversion, billing, icon, or font work moved into D2.
 
 Exact file boundary:
 
 Modify:
 
 - `src/app/index.tsx` — delegate recorder orchestration to the revised state contract and render new controls.
-- `src/features/recording/recording-machine.ts` — add paused/cancelling/completing/failed transitions and accumulated active duration.
+- `src/features/recording/recording-machine.ts` — add paused/cancelling/completing/error transitions and accumulated active duration.
 - `src/features/recording/recording-store.ts` — expose the revised context/events without side effects.
 - `src/features/recording/use-local-audio-recorder.ts` — add guarded `pause`, `resume`, finalization, and verified deletion on one recorder object.
-- `src/features/first-use/first-use-flow.ts` — countdown/down-timer formatting and phase mapping only.
+- `src/features/first-use/first-use-flow.ts` — phase mapping only.
+- `src/features/auth/auth-recovery.ts` — add save-and-readback verification for local completion metadata.
 - `src/features/recording/recording-machine.test.ts`
 - `src/features/first-use/first-use-flow.test.ts`
+- `src/features/auth/auth-recovery.test.ts`
 - `e2e/audio-proof.spec.ts`
 - `e2e/responsive.spec.ts`
-- `notes/micdrop-r0a-audio-proof.md` only when recording new acceptance evidence; no historical rewriting.
+- `docs/failure-log.md`
+- `docs/decision-log.md`
+- `notes/dropmic-mvp-ui-redesign.md`
 
 Add:
 
-- `src/features/recording/RecordingControls.tsx`
 - `src/features/recording/HoldToCancel.tsx`
 - `src/features/recording/HoldToCancel.test.tsx`
-- `src/features/recording/use-local-audio-recorder.test.ts` if the native module boundary can be deterministically mocked; otherwise keep native lifecycle proof in E2E/manual acceptance.
+- `src/features/recording/use-local-audio-recorder.test.tsx`
 
 Do not touch in D2: auth conversion, Quick Read service/Edge function, Flow service/SQL, billing, icon/font assets.
 
@@ -584,6 +587,8 @@ Required tests/gates:
 - Physical iPhone and iPad audible A/pause/B proof, interruption proof, document-file count before/after cancel/delete, and 30/60/90 auto-stop checks. Simulator UI checks do not replace physical microphone proof.
 - Reduced Motion and VoiceOver hold-cancel alternative.
 - Full baseline validation suite from D1.
+
+Implementation caveat: the repository's current Jest config matches `src/**/*.test.ts`, so the new authorized `.test.tsx` recorder component/hook tests require an explicit `--testMatch '**/*.test.tsx'` invocation unless a later authorized config change expands the default matcher.
 
 Rollback boundary: one D2 commit containing machine, wrapper, controls, and tests. Revert as a unit; never revert only the UI because Stop semantics would then disagree with the state machine. No database rollback is involved.
 

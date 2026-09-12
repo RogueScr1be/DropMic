@@ -1,9 +1,9 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AppState, Animated, Modal, StyleSheet, Text, View } from 'react-native';
+import { AppState, Animated, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 
 import { SignupFlow } from '@/features/auth/SignupFlow';
-import { clearUnclaimedAttempt, getUnclaimedAttempt, saveUnclaimedAttempt, type UnclaimedAttempt } from '@/features/auth/auth-recovery';
+import { clearUnclaimedAttempt, getUnclaimedAttempt, saveAndVerifyUnclaimedAttempt, type UnclaimedAttempt } from '@/features/auth/auth-recovery';
 import { claimUnclaimedAttempt, getSession } from '@/features/auth/auth-service';
 import { isSupabaseConfigured, supabase } from '@/features/auth/auth-client';
 import {
@@ -18,7 +18,17 @@ import {
 import { MicFlowCard } from '@/features/mic-flow/MicFlowCard';
 import { bindRevenueCatSession } from '@/features/billing/revenuecat-session';
 import { AgeGate } from '@/features/first-use/AgeGate';
-import { firstScreenAfterSplash, PREPARATION_COUNTDOWN_MS, SPLASH_DURATION_MS, formatCountdownNumber, formatSpeakingTime, phaseForRecordingState, type FirstUsePhase } from '@/features/first-use/first-use-flow';
+import {
+  firstScreenAfterSplash,
+  PREPARATION_COUNTDOWN_MS,
+  SPLASH_DURATION_MS,
+  formatCountdownNumber,
+  formatSpeakingTime,
+  phaseForRecordingState,
+  recoveryPresentationForState,
+  recordingStartDecision,
+  type FirstUsePhase,
+} from '@/features/first-use/first-use-flow';
 import { hasAcceptedAgeGate, saveAgeGateAcceptance } from '@/features/first-use/first-run-storage';
 import { SplashReveal } from '@/features/first-use/SplashReveal';
 import { useReducedMotion } from '@/features/first-use/use-reduced-motion';
@@ -26,8 +36,16 @@ import { QuickReadFlow } from '@/features/quick-read/QuickReadFlow';
 import { createTakeIdentity, type TakeIdentity } from '@/features/quick-read/attempt-identity';
 import { createTakeTwoTake } from '@/features/quick-read/take-two-journey';
 import { useLocalAudioRecorder } from '@/features/recording/use-local-audio-recorder';
+import { HoldToCancel } from '@/features/recording/HoldToCancel';
 import {
-  deriveElapsedMs,
+  clearLocalCompletedTake,
+  getLocalCompletedTake,
+  LOCAL_COMPLETED_TAKE_VERSION,
+  saveAndVerifyLocalCompletedTake,
+  type LocalCompletedTake,
+} from '@/features/recording/local-completed-take';
+import {
+  deriveActiveElapsedMs,
   isInterruptibleState,
   isRecordingState,
   type RecordingDuration,
@@ -55,6 +73,8 @@ export default function AudioProofScreen() {
   const completedAtMs = useRecordingStore((store) => store.completedAtMs);
   const recordingUri = useRecordingStore((store) => store.recordingUri);
   const recordingError = useRecordingStore((store) => store.error);
+  const recordingFailureKind = useRecordingStore((store) => store.failureKind);
+  const cleanupPending = useRecordingStore((store) => store.cleanupPending);
   const elapsedMs = useRecordingStore((store) => store.elapsedMs);
   const nowMs = useRecordingStore((store) => store.nowMs);
   const dispatch = useRecordingStore((store) => store.dispatch);
@@ -79,7 +99,13 @@ export default function AudioProofScreen() {
   const [micFlowSnapshotLoading, setMicFlowSnapshotLoading] = useState(false);
   const [micFlowSavePromptVisible, setMicFlowSavePromptVisible] = useState(false);
   const [micFlowCompletionMessage, setMicFlowCompletionMessage] = useState<string | null>(null);
+  const [retainedCompletedTake, setRetainedCompletedTake] = useState<LocalCompletedTake | null>(null);
+  const [completedTakeHidden, setCompletedTakeHidden] = useState(false);
+  const [retainedTakeStartPromptVisible, setRetainedTakeStartPromptVisible] = useState(false);
+  const [retainedTakeHydrating, setRetainedTakeHydrating] = useState(true);
   const stopInFlight = useRef(false);
+  const completionInFlight = useRef(false);
+  const cleanupInFlight = useRef(false);
   const startInFlight = useRef(false);
   const operationGeneration = useRef(0);
   const countdownTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -87,22 +113,31 @@ export default function AudioProofScreen() {
   const takeTwoStartInFlight = useRef(false);
   const micFlowCompletionRef = useRef<string | null>(null);
   const micFlowIdentityRef = useRef<MicFlowRecordingIdentity | null>(null);
+  const recordingOwnerIdRef = useRef<string | null>(null);
   const micFlowIdentityGenerationRef = useRef(0);
   const pendingMicFlowCompletionRef = useRef<{ input: MicFlowCompletion; identity: MicFlowRecordingIdentity; generation: number } | null>(null);
   const micFlowDecisionInFlight = useRef(false);
   const micFlowSnapshotRequestRef = useRef(0);
   const micFlowSnapshotCoordinatorRef = useRef(createMicFlowSnapshotCoordinator());
+  const discardTransientRecordingRef = useRef(audio.discardTransientRecording);
 
   const elapsed = useMemo(
-    () => deriveElapsedMs(startedAtMs, nowMs, selectedDurationSeconds * 1000),
-    [nowMs, selectedDurationSeconds, startedAtMs],
+    () => deriveActiveElapsedMs(elapsedMs, startedAtMs, nowMs, selectedDurationSeconds * 1000),
+    [elapsedMs, nowMs, selectedDurationSeconds, startedAtMs],
   );
+  const remainingMs = Math.max(0, selectedDurationSeconds * 1000 - elapsed);
   const statePhase = phaseForRecordingState(recordingState);
+  const hasHiddenCompletedTake = recordingState === 'completed' && completedTakeHidden && Boolean(recordingUri);
+  const recoveryPresentation = recoveryPresentationForState({
+    hasAuthRecovery: Boolean(recoveryAttempt),
+    hasHiddenCompletedTake,
+    hasRetainedCompletedTake: Boolean(retainedCompletedTake),
+  });
   const firstUsePhase = phase === 'splash' && splashElapsed && ageGateAccepted !== null
     ? firstScreenAfterSplash(ageGateAccepted)
     : phase;
   const displayedPhase: ExperiencePhase =
-    statePhase ??
+    (statePhase === 'completion' && completedTakeHidden ? firstUsePhase : statePhase) ??
     (recordingState === 'interrupted'
       ? 'interrupted'
       : recordingState === 'error'
@@ -171,6 +206,9 @@ export default function AudioProofScreen() {
     const captured = micFlowIdentityRef.current;
     micFlowIdentityGenerationRef.current += 1;
     micFlowIdentityRef.current = null;
+    if (recordingOwnerIdRef.current && recordingOwnerIdRef.current !== nextOwnerId) {
+      recordingOwnerIdRef.current = null;
+    }
     pendingMicFlowCompletionRef.current = null;
     micFlowSnapshotCoordinatorRef.current.transition(nextOwnerId);
     micFlowSnapshotRequestRef.current += 1;
@@ -187,8 +225,31 @@ export default function AudioProofScreen() {
   }, [refreshRecoveryAttempt]);
 
   useEffect(() => {
+    let cancelled = false;
+    void getMicFlowOwnerId().then(async (ownerId) => {
+      const restored = await getLocalCompletedTake(ownerId);
+      if (!cancelled) {
+        setRetainedCompletedTake(restored);
+        setRetainedTakeHydrating(false);
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setRetainedCompletedTake(null);
+        setRetainedTakeHydrating(false);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     return bindRevenueCatSession();
   }, []);
+
+  useEffect(() => {
+    discardTransientRecordingRef.current = audio.discardTransientRecording;
+  }, [audio.discardTransientRecording]);
 
   useEffect(() => {
     const refreshTimer = setTimeout(() => void refreshMicFlowSnapshot(), 0);
@@ -199,6 +260,7 @@ export default function AudioProofScreen() {
     return () => {
       micFlowIdentityGenerationRef.current += 1;
       micFlowIdentityRef.current = null;
+      recordingOwnerIdRef.current = null;
       pendingMicFlowCompletionRef.current = null;
       micFlowSnapshotRequestRef.current += 1;
     };
@@ -265,45 +327,120 @@ export default function AudioProofScreen() {
         setMicFlowStatus('idle');
         setMicFlowCompletionMessage(null);
       }
+    } catch {
+      setMicFlowStatus('unprotected');
+      setMicFlowSavePromptVisible(false);
+      setMicFlowCompletionMessage(null);
     } finally {
       micFlowDecisionInFlight.current = false;
     }
   }, [refreshMicFlowSnapshot]);
 
-  useEffect(() => {
-    if (!currentAttempt) {
+  const exposeVerifiedCompletion = useCallback((attempt: UnclaimedAttempt) => {
+    if (micFlowCompletionRef.current === attempt.clientAttemptId) {
       return;
     }
-    if (micFlowCompletionRef.current === currentAttempt.clientAttemptId) {
-      return;
-    }
-    micFlowCompletionRef.current = currentAttempt.clientAttemptId;
+    micFlowCompletionRef.current = attempt.clientAttemptId;
     const identity = micFlowIdentityRef.current;
     if (!identity) {
       setMicFlowStatus('unprotected');
       return;
     }
     const input: MicFlowCompletion = {
-      completionId: currentAttempt.clientAttemptId,
+      completionId: attempt.clientAttemptId,
       mode: 'cold_take',
-      topicId: currentAttempt.topicId,
-      selectedDurationSeconds: currentAttempt.selectedDurationSeconds,
-      completedDurationSeconds: currentAttempt.completedDurationSeconds,
+      topicId: attempt.topicId,
+      selectedDurationSeconds: attempt.selectedDurationSeconds,
+      completedDurationSeconds: attempt.completedDurationSeconds,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
     };
     const generation = micFlowIdentityGenerationRef.current;
     pendingMicFlowCompletionRef.current = { input, identity, generation };
     void submitMicFlowCompletion(null);
-    let cancelled = false;
-    void saveUnclaimedAttempt(currentAttempt).then(() => {
-      if (!cancelled) {
-        setRecoveryAttempt(currentAttempt);
-      }
-    });
-    return () => {
-      cancelled = true;
+  }, [submitMicFlowCompletion]);
+
+  const persistFinalizedAttempt = useCallback(async (completedAtMsForAttempt: number, activeElapsedMs: number) => {
+    const attempt: UnclaimedAttempt = {
+      audioRetained: false,
+      clientAttemptId: takeIdentityRef.current.clientAttemptId,
+      completedAt: new Date(completedAtMsForAttempt).toISOString(),
+      completedDurationSeconds: Math.round(activeElapsedMs / 1000),
+      selectedDurationSeconds,
+      topicId: topic.id,
     };
-  }, [currentAttempt, submitMicFlowCompletion]);
+    const savedAttempt = await saveAndVerifyUnclaimedAttempt(attempt);
+    setRecoveryAttempt(savedAttempt);
+    return savedAttempt;
+  }, [selectedDurationSeconds, topic.id]);
+
+  const persistLocalCompletedTake = useCallback(async (
+    uri: string,
+    completedAtMsForAttempt: number,
+    activeElapsedMs: number,
+  ) => {
+    const ownerId = recordingOwnerIdRef.current ?? micFlowIdentityRef.current?.userId ?? await getMicFlowOwnerId();
+    if (!ownerId) {
+      setRetainedCompletedTake(null);
+      throw new Error('A local owner is required before this recording can be saved.');
+    }
+    const retainedTake: LocalCompletedTake = {
+      version: LOCAL_COMPLETED_TAKE_VERSION,
+      clientAttemptId: takeIdentityRef.current.clientAttemptId,
+      completedAt: new Date(completedAtMsForAttempt).toISOString(),
+      completedDurationSeconds: Math.round(activeElapsedMs / 1000),
+      localUri: uri,
+      ownerId,
+      prompt: topic.prompt,
+      quickReadIdempotencyKey: takeIdentityRef.current.quickReadIdempotencyKey,
+      selectedDurationSeconds,
+      topicId: topic.id,
+    };
+    const verifiedTake = await saveAndVerifyLocalCompletedTake(retainedTake);
+    setRetainedCompletedTake(verifiedTake);
+    return verifiedTake;
+  }, [selectedDurationSeconds, topic.id, topic.prompt]);
+
+  const beginNewTake = useCallback((comparisonBaselineRunId: string | null = null, nextTakeIdentity = createTakeIdentity()) => {
+    micFlowIdentityGenerationRef.current += 1;
+    micFlowIdentityRef.current = null;
+    pendingMicFlowCompletionRef.current = null;
+    micFlowCompletionRef.current = null;
+    recordingOwnerIdRef.current = null;
+    setMicFlowCompletionMessage(null);
+    takeIdentityRef.current = nextTakeIdentity;
+    setTakeIdentity(nextTakeIdentity);
+    setServerAttemptId(null);
+    setTakeTwoBaselineRunId(comparisonBaselineRunId);
+    setIsQuickReadVisible(false);
+    setMicFlowStatus('idle');
+    setMicFlowSavePromptVisible(false);
+    setRetainedTakeStartPromptVisible(false);
+  }, []);
+
+  const showRetainedCompletedTake = useCallback((take: LocalCompletedTake) => {
+    setTopic({ category: 'Recovered', id: take.topicId, prompt: take.prompt });
+    const restoredIdentity = {
+      clientAttemptId: take.clientAttemptId,
+      quickReadIdempotencyKey: take.quickReadIdempotencyKey,
+    };
+    takeIdentityRef.current = restoredIdentity;
+    setTakeIdentity(restoredIdentity);
+    setServerAttemptId(null);
+    setTakeTwoBaselineRunId(null);
+    setIsQuickReadVisible(false);
+    setRetainedTakeStartPromptVisible(false);
+    micFlowCompletionRef.current = take.clientAttemptId;
+    recordingOwnerIdRef.current = take.ownerId;
+    audio.retainFinalizedRecording(take.localUri);
+    dispatch({
+      type: 'RESTORE_COMPLETED',
+      completedAtMs: Date.parse(take.completedAt),
+      elapsedMs: take.completedDurationSeconds * 1000,
+      selectedDurationSeconds: take.selectedDurationSeconds,
+      uri: take.localUri,
+    });
+    setCompletedTakeHidden(false);
+  }, [audio, dispatch]);
 
   const clearCountdown = useCallback(() => {
     if (countdownTimer.current) {
@@ -318,54 +455,246 @@ export default function AudioProofScreen() {
       return;
     }
 
-    const operationId = ++operationGeneration.current;
     stopInFlight.current = true;
     dispatch({ type: 'STOP_REQUESTED' });
     try {
-      const uri = await audio.stop();
-      if (operationId !== operationGeneration.current || useRecordingStore.getState().state !== 'processing') {
-        return;
-      }
-      if (uri) {
-        dispatch({ type: 'RECORDING_READY', uri });
-      } else {
-        dispatch({ type: 'FAILURE', message: 'The recording did not produce a local file.' });
-      }
-    } catch (stopError) {
+      await audio.pause();
+    } catch (pauseError) {
       dispatch({
         type: 'FAILURE',
-        message: stopError instanceof Error ? stopError.message : 'Unable to stop recording.',
+        message: pauseError instanceof Error ? pauseError.message : 'Unable to pause recording.',
       });
     } finally {
       stopInFlight.current = false;
     }
   }, [audio, dispatch, recordingState]);
 
-  const interruptRecording = useCallback(() => {
-    if (stopInFlight.current || !isInterruptibleState(recordingState)) {
+  const resumeRecording = useCallback(async () => {
+    if (stopInFlight.current || recordingState !== 'paused') {
+      return;
+    }
+    stopInFlight.current = true;
+    dispatch({ type: 'RESUME_REQUESTED' });
+    try {
+      await audio.resume();
+    } catch (resumeError) {
+      dispatch({
+        type: 'FAILURE',
+        message: resumeError instanceof Error ? resumeError.message : 'Unable to resume recording.',
+      });
+    } finally {
+      stopInFlight.current = false;
+    }
+  }, [audio, dispatch, recordingState]);
+
+  const completeRecording = useCallback(async () => {
+    const currentState = useRecordingStore.getState();
+    if (
+      completionInFlight.current ||
+      (currentState.state !== 'recording' && currentState.state !== 'paused' && currentState.state !== 'completing')
+    ) {
       return;
     }
 
     const operationId = ++operationGeneration.current;
-    stopInFlight.current = true;
-    if (recordingState === 'countdown') {
-      clearCountdown();
-      dispatch({ type: 'RECORDING_INTERRUPTED', reason: 'The recording was interrupted.' });
-      stopInFlight.current = false;
+    completionInFlight.current = true;
+    if (currentState.state !== 'completing') {
+      dispatch({ type: 'COMPLETE_REQUESTED' });
+    }
+    try {
+      const activeElapsedMs = useRecordingStore.getState().elapsedMs;
+      const uri = useRecordingStore.getState().recordingUri ?? await audio.finalize();
+      if (operationId !== operationGeneration.current || useRecordingStore.getState().state !== 'completing') {
+        return;
+      }
+      if (uri) {
+        dispatch({ type: 'FINALIZED', uri });
+        const completedAtMsForAttempt = Date.now();
+        await persistLocalCompletedTake(uri, completedAtMsForAttempt, activeElapsedMs);
+        const savedAttempt = await persistFinalizedAttempt(completedAtMsForAttempt, activeElapsedMs);
+        if (operationId !== operationGeneration.current || useRecordingStore.getState().state !== 'completing') {
+          return;
+        }
+        audio.retainFinalizedRecording(uri);
+        setCompletedTakeHidden(false);
+        dispatch({ type: 'PERSISTENCE_CONFIRMED', completedAtMs: completedAtMsForAttempt });
+        exposeVerifiedCompletion(savedAttempt);
+      } else {
+        dispatch({ type: 'FAILURE', message: 'The recording did not produce a local file.' });
+      }
+    } catch (completionError) {
+      const message = completionError instanceof Error ? completionError.message : 'Unable to complete recording.';
+      if (useRecordingStore.getState().recordingUri) {
+        dispatch({ type: 'PERSISTENCE_FAILED', message });
+      } else {
+        dispatch({ type: 'FAILURE', message });
+      }
+    } finally {
+      completionInFlight.current = false;
+    }
+  }, [audio, dispatch, exposeVerifiedCompletion, persistFinalizedAttempt, persistLocalCompletedTake]);
+
+  const cancelActiveRecording = useCallback(async () => {
+    const currentState = useRecordingStore.getState();
+    if (cleanupInFlight.current || (currentState.state !== 'paused' && currentState.state !== 'cancelling')) {
       return;
     }
 
-    void audio
-      .stop()
-      .catch(() => null)
-      .then((uri) => (uri ? audio.deleteRecording(uri).catch(() => undefined) : undefined))
-      .finally(() => {
-        if (operationId === operationGeneration.current && useRecordingStore.getState().state === 'recording') {
-          dispatch({ type: 'RECORDING_INTERRUPTED', reason: 'The recording was interrupted.' });
-        }
-        stopInFlight.current = false;
+    const operationId = ++operationGeneration.current;
+    cleanupInFlight.current = true;
+    dispatch({ type: 'CANCEL_CONFIRMED' });
+    try {
+      await audio.discardTransientRecording();
+      if (operationId !== operationGeneration.current || useRecordingStore.getState().state !== 'cancelling') {
+        return;
+      }
+      dispatch({ type: 'CLEANUP_SUCCEEDED' });
+      beginNewTake(takeTwoBaselineRunId);
+      setPhase('duration_selection');
+      setActionError(null);
+    } catch (cleanupError) {
+      dispatch({
+        type: 'CLEANUP_FAILED',
+        message: cleanupError instanceof Error ? cleanupError.message : 'Unable to delete the temporary recording.',
       });
-  }, [audio, clearCountdown, dispatch, recordingState]);
+    } finally {
+      cleanupInFlight.current = false;
+    }
+  }, [audio, beginNewTake, dispatch, takeTwoBaselineRunId]);
+
+  const deleteRetainedCompletedTake = useCallback(async (uri: string | null = recordingUri) => {
+    if (uri) {
+      await audio.deleteRecording(uri);
+    } else if (retainedCompletedTake?.localUri) {
+      await audio.deleteRecording(retainedCompletedTake.localUri);
+    }
+    await clearLocalCompletedTake();
+    await clearUnclaimedAttempt();
+    setRecoveryAttempt(null);
+    setRetainedCompletedTake(null);
+    setCompletedTakeHidden(false);
+    setRetainedTakeStartPromptVisible(false);
+  }, [audio, recordingUri, retainedCompletedTake]);
+
+  const closeCompletedTake = useCallback(async () => {
+    try {
+      await audio.stopPlayback();
+      setCompletedTakeHidden(true);
+      setPhase('topic_reveal');
+      setActionError(null);
+    } catch (playbackCleanupError) {
+      setActionError(
+        playbackCleanupError instanceof Error
+          ? playbackCleanupError.message
+          : 'Unable to stop saved take playback. Your saved take is still available.',
+      );
+    }
+  }, [audio]);
+
+  const retrySaveFinalizedAttempt = useCallback(async () => {
+    const state = useRecordingStore.getState();
+    if (completionInFlight.current || state.failureKind !== 'persistence' || !state.recordingUri) {
+      return;
+    }
+    const operationId = ++operationGeneration.current;
+    completionInFlight.current = true;
+    dispatch({ type: 'RETRY_SAVE' });
+    try {
+      const completedAtMsForAttempt = Date.now();
+      await persistLocalCompletedTake(state.recordingUri, completedAtMsForAttempt, state.elapsedMs);
+      const savedAttempt = await persistFinalizedAttempt(completedAtMsForAttempt, state.elapsedMs);
+      if (operationId !== operationGeneration.current || useRecordingStore.getState().state !== 'completing') {
+        return;
+      }
+      audio.retainFinalizedRecording(state.recordingUri);
+      setCompletedTakeHidden(false);
+      dispatch({ type: 'PERSISTENCE_CONFIRMED', completedAtMs: completedAtMsForAttempt });
+      exposeVerifiedCompletion(savedAttempt);
+      setActionError(null);
+    } catch (saveError) {
+      dispatch({
+        type: 'PERSISTENCE_FAILED',
+        message: saveError instanceof Error ? saveError.message : 'Unable to save the completed recording.',
+      });
+    } finally {
+      completionInFlight.current = false;
+    }
+  }, [audio, dispatch, exposeVerifiedCompletion, persistFinalizedAttempt, persistLocalCompletedTake]);
+
+  const retryCleanupRecording = useCallback(async () => {
+    const state = useRecordingStore.getState();
+    if (cleanupInFlight.current || state.failureKind !== 'cleanup') {
+      return;
+    }
+    const operationId = ++operationGeneration.current;
+    cleanupInFlight.current = true;
+    dispatch({ type: 'RETRY_CLEANUP' });
+    try {
+      await audio.discardTransientRecording();
+      if (operationId !== operationGeneration.current || useRecordingStore.getState().state !== 'cancelling') {
+        return;
+      }
+      dispatch({ type: 'CLEANUP_SUCCEEDED' });
+      beginNewTake(takeTwoBaselineRunId);
+      setPhase('duration_selection');
+      setActionError(null);
+    } catch (cleanupError) {
+      dispatch({
+        type: 'CLEANUP_FAILED',
+        message: cleanupError instanceof Error ? cleanupError.message : 'Unable to delete the temporary recording.',
+      });
+    } finally {
+      cleanupInFlight.current = false;
+    }
+  }, [audio, beginNewTake, dispatch, takeTwoBaselineRunId]);
+
+  const interruptRecording = useCallback((reason = 'The recording was interrupted.') => {
+    if (cleanupInFlight.current || !isInterruptibleState(useRecordingStore.getState().state)) {
+      return;
+    }
+
+    const operationId = ++operationGeneration.current;
+    cleanupInFlight.current = true;
+    const currentState = useRecordingStore.getState().state;
+    if (currentState === 'countdown') {
+      clearCountdown();
+      dispatch({ type: 'RECORDING_INTERRUPTED', reason });
+      void audio.discardTransientRecording()
+        .then(() => {
+          if (operationId === operationGeneration.current && useRecordingStore.getState().state === 'interrupted') {
+            dispatch({ type: 'CLEANUP_SUCCEEDED' });
+          }
+        })
+        .catch((cleanupError) => {
+          dispatch({
+            type: 'CLEANUP_FAILED',
+            message: cleanupError instanceof Error ? cleanupError.message : 'Unable to delete the interrupted recording.',
+          });
+        })
+        .finally(() => {
+          cleanupInFlight.current = false;
+        });
+      return;
+    }
+
+    dispatch({ type: 'RECORDING_INTERRUPTED', reason });
+    void audio
+      .discardTransientRecording()
+      .then(() => {
+        if (operationId === operationGeneration.current && useRecordingStore.getState().state === 'interrupted') {
+          dispatch({ type: 'CLEANUP_SUCCEEDED' });
+        }
+      })
+      .catch((cleanupError) => {
+        dispatch({
+          type: 'CLEANUP_FAILED',
+          message: cleanupError instanceof Error ? cleanupError.message : 'Unable to delete the interrupted recording.',
+        });
+      })
+      .finally(() => {
+        cleanupInFlight.current = false;
+      });
+  }, [audio, clearCountdown, dispatch]);
 
   useEffect(() => {
     if (recordingState !== 'recording') {
@@ -377,18 +706,18 @@ export default function AudioProofScreen() {
       setNow(nextNowMs);
       if (
         startedAtMs !== null &&
-        deriveElapsedMs(startedAtMs, nextNowMs, selectedDurationSeconds * 1000) >=
+        deriveActiveElapsedMs(elapsedMs, startedAtMs, nextNowMs, selectedDurationSeconds * 1000) >=
           selectedDurationSeconds * 1000
       ) {
-        void stopRecording();
+        void completeRecording();
       }
     }, 100);
 
     return () => clearInterval(interval);
-  }, [recordingState, selectedDurationSeconds, setNow, startedAtMs, stopRecording]);
+  }, [completeRecording, elapsedMs, recordingState, selectedDurationSeconds, setNow, startedAtMs]);
 
   useEffect(() => {
-    if (audio.mediaServicesDidReset && recordingState === 'recording') {
+    if (audio.mediaServicesDidReset && isInterruptibleState(recordingState)) {
       const interruptionTimer = setTimeout(() => interruptRecording(), 0);
       return () => clearTimeout(interruptionTimer);
     }
@@ -398,7 +727,7 @@ export default function AudioProofScreen() {
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
       if (nextState !== 'active' && isInterruptibleState(recordingState)) {
-        interruptRecording();
+        interruptRecording('The app left the foreground before the Drop finished.');
       }
     });
 
@@ -414,10 +743,35 @@ export default function AudioProofScreen() {
     return () => clearInterval(interval);
   }, [countdownStartedAtMs, displayedPhase]);
 
-  useEffect(() => () => clearCountdown(), [clearCountdown]);
+  useEffect(() => () => {
+    operationGeneration.current += 1;
+    if (countdownTimer.current) {
+      clearTimeout(countdownTimer.current);
+      countdownTimer.current = null;
+    }
+    if (isInterruptibleState(useRecordingStore.getState().state)) {
+      void discardTransientRecordingRef.current().catch(() => undefined);
+      useRecordingStore.getState().dispatch({ type: 'RECORDING_INTERRUPTED', reason: 'The recording screen closed before the Drop finished.' });
+    }
+  }, []);
 
-  const beginRecording = useCallback(async () => {
+  const beginRecording = useCallback(async (options?: { replaceRetainedTake?: boolean }) => {
     if (startInFlight.current || recordingState === 'recording' || displayedPhase !== 'duration_selection') {
+      return;
+    }
+
+    const hasRetainedTake = Boolean(retainedCompletedTake || (recordingState === 'completed' && recordingUri));
+    const startDecision = recordingStartDecision({
+      hasRetainedTake,
+      replaceRetainedTake: Boolean(options?.replaceRetainedTake),
+      retainedTakeHydrating,
+    });
+    if (startDecision === 'wait-for-retained-take-hydration') {
+      setActionError('Checking for a saved take before starting.');
+      return;
+    }
+    if (startDecision === 'confirm-retained-take-replacement') {
+      setRetainedTakeStartPromptVisible(true);
       return;
     }
 
@@ -425,6 +779,17 @@ export default function AudioProofScreen() {
     startInFlight.current = true;
     setIsStarting(true);
     setActionError(null);
+    if (hasRetainedTake && options?.replaceRetainedTake) {
+      try {
+        await deleteRetainedCompletedTake(recordingUri);
+        dispatch({ type: 'DELETE_RECORDING' });
+      } catch (deleteError) {
+        setActionError(deleteError instanceof Error ? deleteError.message : 'Unable to delete saved take.');
+        setIsStarting(false);
+        startInFlight.current = false;
+        return;
+      }
+    }
     ++micFlowIdentityGenerationRef.current;
     micFlowIdentityRef.current = null;
     pendingMicFlowCompletionRef.current = null;
@@ -432,6 +797,7 @@ export default function AudioProofScreen() {
       isCurrent: () => operationId === operationGeneration.current,
     });
     if (operationId === operationGeneration.current && identity) {
+      recordingOwnerIdRef.current = identity.userId;
       const currentOwnerId = await getMicFlowOwnerId();
       if (operationId === operationGeneration.current && currentOwnerId === identity.userId) {
         micFlowIdentityRef.current = identity;
@@ -458,6 +824,7 @@ export default function AudioProofScreen() {
       await audio.prepare();
 
       if (operationId !== operationGeneration.current || useRecordingStore.getState().state !== 'countdown') {
+        void audio.discardTransientRecording().catch(() => undefined);
         setIsStarting(false);
         startInFlight.current = false;
         return;
@@ -474,7 +841,7 @@ export default function AudioProofScreen() {
             if (operationId === operationGeneration.current && useRecordingStore.getState().state === 'countdown') {
               dispatch({ type: 'COUNTDOWN_COMPLETE' });
             } else {
-              void audio.stop().catch(() => undefined);
+              void audio.discardTransientRecording().catch(() => undefined);
             }
           })
           .catch((startError) => {
@@ -501,7 +868,27 @@ export default function AudioProofScreen() {
       setIsStarting(false);
       startInFlight.current = false;
     }
-  }, [audio, clearCountdown, dispatch, displayedPhase, recordingState]);
+  }, [
+    audio,
+    clearCountdown,
+    deleteRetainedCompletedTake,
+    dispatch,
+    displayedPhase,
+    recordingState,
+    recordingUri,
+    retainedCompletedTake,
+    retainedTakeHydrating,
+  ]);
+
+  const keepSavedTake = useCallback(() => {
+    void audio.stopPlayback().catch(() => undefined);
+    setRetainedTakeStartPromptVisible(false);
+    setPhase('topic_reveal');
+  }, [audio]);
+
+  const deleteTakeAndStart = useCallback(() => {
+    void beginRecording({ replaceRetainedTake: true });
+  }, [beginRecording]);
 
   const chooseNewTopic = useCallback(() => {
     micFlowIdentityGenerationRef.current += 1;
@@ -515,21 +902,6 @@ export default function AudioProofScreen() {
     setActionError(null);
     setPhase('topic_reveal');
   }, [revealKey]);
-
-  const beginNewTake = useCallback((comparisonBaselineRunId: string | null = null, nextTakeIdentity = createTakeIdentity()) => {
-    micFlowIdentityGenerationRef.current += 1;
-    micFlowIdentityRef.current = null;
-    pendingMicFlowCompletionRef.current = null;
-    micFlowCompletionRef.current = null;
-    setMicFlowCompletionMessage(null);
-    takeIdentityRef.current = nextTakeIdentity;
-    setTakeIdentity(nextTakeIdentity);
-    setServerAttemptId(null);
-    setTakeTwoBaselineRunId(comparisonBaselineRunId);
-    setIsQuickReadVisible(false);
-    setMicFlowStatus('idle');
-    setMicFlowSavePromptVisible(false);
-  }, []);
 
   const beginTakeTwo = useCallback((baselineRunId: string) => {
     if (!baselineRunId || takeTwoStartInFlight.current) {
@@ -549,18 +921,14 @@ export default function AudioProofScreen() {
     setPhase('duration_selection');
     takeTwoStartInFlight.current = false;
     if (previousRecordingUri) {
-      void audio.deleteRecording(previousRecordingUri).catch(() => undefined);
+      void deleteRetainedCompletedTake(previousRecordingUri).catch(() => undefined);
     }
-  }, [audio, beginNewTake, dispatch, recordingUri, selectedDurationSeconds, topic.id]);
+  }, [beginNewTake, deleteRetainedCompletedTake, dispatch, recordingUri, selectedDurationSeconds, topic.id]);
 
   const retryAttempt = useCallback(async () => {
     try {
       operationGeneration.current += 1;
-      if (recordingUri) {
-        await audio.deleteRecording(recordingUri);
-      }
-      await clearUnclaimedAttempt();
-      setRecoveryAttempt(null);
+      await deleteRetainedCompletedTake(recordingUri);
       beginNewTake(takeTwoBaselineRunId);
       dispatch({ type: 'RETRY' });
       if (takeTwoBaselineRunId) {
@@ -575,16 +943,12 @@ export default function AudioProofScreen() {
         message: retryError instanceof Error ? retryError.message : 'Unable to retry recording.',
       });
     }
-  }, [audio, beginNewTake, chooseNewTopic, dispatch, recordingUri, takeTwoBaselineRunId]);
+  }, [beginNewTake, chooseNewTopic, deleteRetainedCompletedTake, dispatch, recordingUri, takeTwoBaselineRunId]);
 
   const deleteAttempt = useCallback(async () => {
     try {
       operationGeneration.current += 1;
-      if (recordingUri) {
-        await audio.deleteRecording(recordingUri);
-      }
-      await clearUnclaimedAttempt();
-      setRecoveryAttempt(null);
+      await deleteRetainedCompletedTake(recordingUri);
       beginNewTake();
       dispatch({ type: 'DELETE_RECORDING' });
       chooseNewTopic();
@@ -595,7 +959,7 @@ export default function AudioProofScreen() {
         message: deleteError instanceof Error ? deleteError.message : 'Unable to delete recording.',
       });
     }
-  }, [audio, beginNewTake, chooseNewTopic, dispatch, recordingUri]);
+  }, [beginNewTake, chooseNewTopic, deleteRetainedCompletedTake, dispatch, recordingUri]);
 
   const openQuickRead = useCallback(async () => {
     try {
@@ -652,10 +1016,26 @@ export default function AudioProofScreen() {
           {displayedPhase !== 'age_gate' && (
             <View style={[styles.experienceGrid, layout.useTwoColumns && displayedPhase !== 'topic_reveal' && styles.experienceGridWide]}>
               <View style={styles.primaryColumn} testID="primary-region">
-                {recoveryAttempt && displayedPhase !== 'completion' && (
+                {recoveryPresentation && displayedPhase !== 'completion' && (
                   <View style={styles.recoveryBanner}>
-                    <Text style={styles.recoveryBannerText}>You have a completed local take ready to claim.</Text>
-                    <ActionButton label="Resume Quick Read setup" onPress={() => setIsAuthFlowVisible(true)} secondary />
+                    <Text style={styles.recoveryBannerText}>
+                      {recoveryPresentation === 'retained-take'
+                        ? 'You have a completed local take saved on this device.'
+                        : 'You have a completed local take ready to claim.'}
+                    </Text>
+                    <ActionButton
+                      label={recoveryPresentation === 'retained-take' ? 'Resume saved take' : 'Resume Quick Read setup'}
+                      onPress={() => {
+                        if (recoveryPresentation === 'retained-take' && hasHiddenCompletedTake) {
+                          setCompletedTakeHidden(false);
+                        } else if (recoveryPresentation === 'retained-take' && retainedCompletedTake) {
+                          showRetainedCompletedTake(retainedCompletedTake);
+                        } else {
+                          setIsAuthFlowVisible(true);
+                        }
+                      }}
+                      secondary
+                    />
                   </View>
                 )}
 
@@ -683,13 +1063,17 @@ export default function AudioProofScreen() {
                     locked={Boolean(takeTwoBaselineRunId)}
                     onBegin={beginRecording}
                     onPermissionRetry={beginRecording}
+                    onDeleteTakeAndStart={deleteTakeAndStart}
+                    onKeepSavedTake={keepSavedTake}
                     prompt={topic.prompt}
+                    retainedTakePromptVisible={retainedTakeStartPromptVisible}
                     selectedDuration={selectedDurationSeconds}
                     setDuration={(duration) => {
                       if (!takeTwoBaselineRunId) {
                         dispatch({ type: 'SELECT_DURATION', duration });
                       }
                     }}
+                    showPermissionRetry={recordingState === 'permission_denied' || Boolean(recordingError)}
                     stackedDurations={layout.stackControls}
                   />
                 )}
@@ -709,9 +1093,17 @@ export default function AudioProofScreen() {
 
                 {displayedPhase === 'recording' && (
           <RecordingView
-            elapsed={elapsed}
+            cleanupPending={cleanupPending || cleanupInFlight.current}
+            isCompleting={recordingState === 'completing'}
+            isPaused={recordingState === 'paused' || recordingState === 'cancelling'}
+            onCancel={() => void cancelActiveRecording()}
+            onHoldRelease={() => dispatch({ type: 'CANCEL_HOLD_RELEASED' })}
+            onHoldStart={() => dispatch({ type: 'CANCEL_HOLD_STARTED' })}
+            onResume={() => void resumeRecording()}
             onStop={() => void stopRecording()}
             prompt={topic.prompt}
+            reducedMotion={reducedMotion}
+            remainingMs={remainingMs}
             selectedDuration={selectedDurationSeconds}
           />
                 )}
@@ -728,9 +1120,23 @@ export default function AudioProofScreen() {
 
                 {displayedPhase === 'error' && (
           <StatusPanel
-            actionLabel="Try again"
+            actionLabel={
+              recordingFailureKind === 'persistence'
+                ? 'Retry Save'
+                : recordingFailureKind === 'cleanup'
+                  ? 'Retry Cleanup'
+                  : 'Try again'
+            }
             body={actionError ?? recordingError ?? 'The take failed safely. Your local state is still intact.'}
-            onAction={() => void retryAttempt()}
+            onAction={() => {
+              if (recordingFailureKind === 'persistence') {
+                void retrySaveFinalizedAttempt();
+              } else if (recordingFailureKind === 'cleanup') {
+                void retryCleanupRecording();
+              } else {
+                void retryAttempt();
+              }
+            }}
             prompt={topic.prompt}
             title="Let’s reset the take."
           />
@@ -745,6 +1151,7 @@ export default function AudioProofScreen() {
             micFlowStatus={micFlowStatus}
             onMicFlowSaveDecision={(useSave) => void submitMicFlowCompletion(useSave)}
             onDelete={() => void deleteAttempt()}
+            onDismiss={() => void closeCompletedTake()}
             onPlay={() =>
               void audio.play(recordingUri).catch((playError) => {
                 setActionError(playError instanceof Error ? playError.message : 'Unable to play recording.');
@@ -862,20 +1269,28 @@ function DurationSelection({
   isStarting,
   locked,
   onBegin,
+  onDeleteTakeAndStart,
+  onKeepSavedTake,
   onPermissionRetry,
   prompt,
+  retainedTakePromptVisible,
   selectedDuration,
   setDuration,
+  showPermissionRetry,
   stackedDurations,
 }: {
   actionError: string | null;
   isStarting: boolean;
   locked: boolean;
   onBegin: () => void;
+  onDeleteTakeAndStart: () => void;
+  onKeepSavedTake: () => void;
   onPermissionRetry: () => void;
   prompt: string;
+  retainedTakePromptVisible: boolean;
   selectedDuration: RecordingDuration;
   setDuration: (duration: RecordingDuration) => void;
+  showPermissionRetry: boolean;
   stackedDurations: boolean;
 }) {
   return (
@@ -887,7 +1302,22 @@ function DurationSelection({
       {actionError && (
         <View style={styles.inlineNotice}>
           <Text style={styles.inlineNoticeText}>{actionError}</Text>
-          <ActionButton label="Try microphone permission again" onPress={onPermissionRetry} secondary />
+          {showPermissionRetry && <ActionButton label="Try microphone permission again" onPress={onPermissionRetry} secondary />}
+        </View>
+      )}
+      {retainedTakePromptVisible && (
+        <View
+          accessibilityLabel="Saved take decision"
+          style={styles.retainedTakePrompt}
+          testID="retained-take-start-prompt">
+          <Text accessibilityRole="header" style={styles.retainedTakeTitle}>You have a saved take.</Text>
+          <Text style={styles.retainedTakeBody}>Keep it for later, or delete it before starting a new Drop.</Text>
+          <ActionButton label="Keep Saved Take" onPress={onKeepSavedTake} secondary />
+          <ActionButton
+            accessibilityHint="Deletes the saved local recording before starting this new Drop"
+            label="Delete Take and Start"
+            onPress={onDeleteTakeAndStart}
+          />
         </View>
       )}
       <ActionButton
@@ -925,26 +1355,90 @@ function CountdownView({
 }
 
 function RecordingView({
-  elapsed,
+  cleanupPending,
+  isCompleting,
+  isPaused,
+  onCancel,
+  onHoldRelease,
+  onHoldStart,
+  onResume,
   onStop,
   prompt,
+  reducedMotion,
+  remainingMs,
   selectedDuration,
 }: {
-  elapsed: number;
+  cleanupPending: boolean;
+  isCompleting: boolean;
+  isPaused: boolean;
+  onCancel: () => void;
+  onHoldRelease: () => void;
+  onHoldStart: () => void;
+  onResume: () => void;
   onStop: () => void;
   prompt: string;
+  reducedMotion: boolean;
+  remainingMs: number;
   selectedDuration: RecordingDuration;
 }) {
   return (
     <View style={styles.centerSection}>
-      <View style={styles.liveDot} />
-      <Text style={styles.eyebrow}>YOU’RE LIVE / LOCAL ONLY</Text>
-      <Text accessibilityLiveRegion="polite" style={styles.timer}>{formatSpeakingTime(elapsed)}</Text>
-      <Text style={styles.timerTarget}>OF {formatSpeakingTime(selectedDuration * 1000)}</Text>
+      <RecordingPulse isPaused={isPaused} reducedMotion={reducedMotion} />
+      <Text style={styles.eyebrow}>{isPaused ? 'PAUSED' : 'RECORDING'}</Text>
+      <Text accessibilityLiveRegion="polite" style={styles.timer}>{formatSpeakingTime(remainingMs)}</Text>
+      <Text style={styles.timerTarget}>{selectedDuration}s Drop</Text>
       <PromptCard prompt={prompt} />
-      <ActionButton label="Stop recording" onPress={onStop} />
+      {isPaused ? (
+        <View
+          accessibilityLabel="Paused recording controls"
+          style={[styles.actionStack, styles.pausedControlColumn]}
+          testID="paused-control-column">
+          <ActionButton
+            accessibilityHint="Continues recording into the same local audio file"
+            disabled={cleanupPending}
+            label="Resume"
+            onPress={onResume}
+          />
+          <HoldToCancel
+            disabled={cleanupPending}
+            onCancel={onCancel}
+            onHoldRelease={onHoldRelease}
+            onHoldStart={onHoldStart}
+            reducedMotion={reducedMotion}
+          />
+        </View>
+      ) : (
+        <ActionButton
+          accessibilityHint="Pauses this recording without finalizing it"
+          disabled={isCompleting}
+          label={isCompleting ? 'Saving Drop…' : 'Stop'}
+          onPress={onStop}
+        />
+      )}
     </View>
   );
+}
+
+function RecordingPulse({ isPaused, reducedMotion }: { isPaused: boolean; reducedMotion: boolean }) {
+  const [opacity] = useState(() => new Animated.Value(isPaused || reducedMotion ? 0.85 : 1));
+
+  useEffect(() => {
+    if (isPaused || reducedMotion) {
+      opacity.stopAnimation();
+      opacity.setValue(isPaused ? 0.45 : 0.85);
+      return;
+    }
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, { duration: 900, toValue: 0.35, useNativeDriver: true }),
+        Animated.timing(opacity, { duration: 900, toValue: 1, useNativeDriver: true }),
+      ]),
+    );
+    pulse.start();
+    return () => pulse.stop();
+  }, [isPaused, opacity, reducedMotion]);
+
+  return <Animated.View style={[styles.liveDot, { opacity }]} />;
 }
 
 function CompletionView({
@@ -955,6 +1449,7 @@ function CompletionView({
   micFlowStatus,
   onMicFlowSaveDecision,
   onDelete,
+  onDismiss,
   onPlay,
   onQuickRead,
   onRetry,
@@ -970,6 +1465,7 @@ function CompletionView({
   micFlowStatus: 'idle' | 'pending' | 'protected' | 'unprotected' | 'save_decision_required';
   onMicFlowSaveDecision: (useSave: boolean) => void;
   onDelete: () => void;
+  onDismiss: () => void;
   onPlay: () => void;
   onQuickRead: () => void;
   onRetry: () => void;
@@ -981,6 +1477,18 @@ function CompletionView({
   return (
     <>
       <View style={styles.section}>
+        <View style={styles.completionHeaderRow}>
+          <View />
+          <Pressable
+            accessibilityHint="Returns to Today’s Drop and keeps this recording for later."
+            accessibilityLabel="Close completed take"
+            accessibilityRole="button"
+            onPress={onDismiss}
+            style={styles.completionCloseButton}
+            testID="close-completed-take">
+            <Text maxFontSizeMultiplier={1.5} style={styles.completionCloseText}>×</Text>
+          </Pressable>
+        </View>
         <CompletionMark reducedMotion={reducedMotion} />
         <Text accessibilityRole="header" style={styles.heroTitle}>That’s a take.</Text>
         <Text style={styles.completionMeta}>{formatSpeakingTime(elapsed)} captured · {selectedDuration}s setting</Text>
@@ -1096,16 +1604,23 @@ const styles = StyleSheet.create({
   lockedTakeNote: { color: colors.coral, ...typography.eyebrow },
   inlineNotice: { backgroundColor: colors.dangerSoft, borderRadius: radii.md, gap: spacing.md, padding: spacing.lg },
   inlineNoticeText: { color: colors.danger, fontSize: 14, lineHeight: 21 },
+  retainedTakePrompt: { backgroundColor: colors.surfaceMuted, borderRadius: radii.lg, gap: spacing.md, padding: spacing.lg },
+  retainedTakeTitle: { color: colors.inkStrong, ...typography.title },
+  retainedTakeBody: { color: colors.muted, fontSize: 15, lineHeight: 22 },
   countdownNumber: { color: colors.coral, fontFamily: typography.displayFamily, fontSize: 138, fontWeight: '700', lineHeight: 150 },
   countdownNumberStatic: { opacity: 0.9 },
   centerPrompt: { color: colors.muted, fontFamily: typography.displayFamily, fontSize: 21, lineHeight: 29, maxWidth: 560, textAlign: 'center' },
   liveDot: { backgroundColor: colors.coral, borderRadius: radii.pill, height: 16, width: 16 },
-  timer: { color: colors.inkStrong, fontFamily: typography.displayFamily, fontSize: 78, fontWeight: '700', letterSpacing: -3 },
+  timer: { color: colors.inkStrong, fontFamily: typography.displayFamily, fontSize: 78, fontWeight: '700', letterSpacing: -1 },
   timerTarget: { color: colors.muted, fontSize: 12, fontWeight: '900', letterSpacing: 2 },
+  completionHeaderRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
+  completionCloseButton: { alignItems: 'center', borderRadius: radii.pill, justifyContent: 'center', minHeight: 48, minWidth: 48 },
+  completionCloseText: { color: colors.ink, fontSize: 34, fontWeight: '300', lineHeight: 38 },
   completionMark: { alignItems: 'center', backgroundColor: colors.ink, borderRadius: radii.pill, height: 82, justifyContent: 'center', width: 82 },
   completionMarkText: { color: colors.successSoft, fontSize: 48, fontWeight: '300' },
   completionMeta: { color: colors.muted, fontSize: 13 },
   actionStack: { gap: spacing.md },
+  pausedControlColumn: { alignItems: 'stretch', maxWidth: 360, minWidth: 260, width: '100%' },
   secondaryRow: { flexDirection: 'row', gap: spacing.md },
   errorText: { color: colors.danger, fontSize: 15, lineHeight: 23, textAlign: 'center' },
   recordingMetadata: { height: 0, opacity: 0, width: 0 },

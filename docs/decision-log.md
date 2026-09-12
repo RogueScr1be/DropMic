@@ -521,3 +521,52 @@ entitlement, Storage, attempt, and analysis residue.
 Do not add a timezone helper or client-side allowlist. Revisit only if
 PostgreSQL's authoritative timezone semantics change or another database-owned
 identifier requires the same exact-membership policy.
+
+## 2026-09-09 — UI-D2 keeps one recorder object and verifies local completion before Flow
+
+### Decision
+
+UI-D2 changes Stop from finalization to pause. A Drop now uses one Expo audio
+recorder and one local file through `prepare -> record -> pause -> record ->
+stop`; no segment concatenation or second recorder layer is introduced. The
+visible timer counts down active recorded time only. Paused time is excluded,
+and automatic zero-time completion enters a single guarded finalization path.
+
+### Tradeoffs
+
+Cancellation finalizes only as needed to obtain a deletable local URI, then
+deletes/revokes the transient file without creating a completion, recovery
+attempt, Mic Flow credit, Quick Read upload, or auth side effect. Completed
+takes are exposed only after local recovery metadata is saved and read back.
+Mic Flow starts after that verified local save; Flow failure leaves the local
+completion valid but unprotected.
+
+### Refactor trigger
+
+Do not extract a generic recorder framework, add segment concatenation, or add
+schema/backend changes for D2. Revisit only if Expo removes same-object
+pause/resume support or product later authorizes background recording.
+
+## 2026-09-09 — App config remains native identity source of truth
+
+### Decision
+
+`app.json` owns native identity for generated iOS state. The generated `ios/`
+project remains ignored and disposable. The visible app name is `DropMic`, the
+iOS bundle identifier is `com.prentisswhitley.dropmic`, and the development
+client scheme is `exp+micdrop`.
+
+### Guardrails
+
+After bundle identity or native-configuration changes, regenerate ignored
+native state from Expo config instead of preserving stale generated projects or
+tracking selected native files. Sanitized native-build copies must exclude
+nested `.DerivedData`, module caches, build outputs, protected artifacts, and
+stale generated `ios/` state. Simulator identity acceptance requires a fresh
+reproducible `.xcworkspace` build and installed `.app` proof; an older app
+loading current Metro JavaScript is not sufficient.
+
+### Refactor trigger
+
+Revisit only if the Expo app-config source of truth changes or native iOS state
+is intentionally brought under version control.

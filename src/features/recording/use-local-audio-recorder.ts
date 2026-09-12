@@ -31,6 +31,13 @@ export function useLocalAudioRecorder() {
   const recorderState = useAudioRecorderState(recorder, 200);
   const player = useAudioPlayer();
   const lastPlayerUri = useRef<string | null>(null);
+  const recorderPhase = useRef<'idle' | 'prepared' | 'recording' | 'paused' | 'finalized'>('idle');
+  const finalizedUri = useRef<string | null>(null);
+  const retainedUris = useRef(new Set<string>());
+  const deletedUris = useRef(new Set<string>());
+  const deletePromises = useRef(new Map<string, Promise<void>>());
+  const finalizePromise = useRef<Promise<string | null> | null>(null);
+  const discardPromise = useRef<Promise<void> | null>(null);
 
   useEffect(() => {
     void getRecordingPermissionsAsync().then((permission) => setPermissionGranted(permission.granted));
@@ -44,21 +51,68 @@ export function useLocalAudioRecorder() {
 
   const prepare = useCallback(async () => {
     setError(null);
+    finalizedUri.current = null;
+    finalizePromise.current = null;
+    discardPromise.current = null;
     await setAudioModeAsync({
       allowsRecording: true,
       allowsBackgroundRecording: false,
       playsInSilentMode: true,
     });
     await recorder.prepareToRecordAsync();
+    recorderPhase.current = 'prepared';
   }, [recorder]);
 
   const start = useCallback(async () => {
+    if (recorderPhase.current !== 'prepared') {
+      return;
+    }
     recorder.record();
+    recorderPhase.current = 'recording';
   }, [recorder]);
 
-  const stop = useCallback(async () => {
-    await recorder.stop();
-    return recorder.uri;
+  const pause = useCallback(async () => {
+    if (recorderPhase.current !== 'recording') {
+      return;
+    }
+    await recorder.pause();
+    recorderPhase.current = 'paused';
+  }, [recorder]);
+
+  const resume = useCallback(async () => {
+    if (recorderPhase.current !== 'paused') {
+      return;
+    }
+    recorder.record();
+    recorderPhase.current = 'recording';
+  }, [recorder]);
+
+  const finalize = useCallback(async () => {
+    if (finalizePromise.current) {
+      return finalizePromise.current;
+    }
+    if (recorderPhase.current === 'finalized') {
+      return finalizedUri.current ?? recorder.uri;
+    }
+
+    finalizePromise.current = (async () => {
+      if (recorderPhase.current === 'prepared') {
+        recorder.record();
+        recorderPhase.current = 'recording';
+      }
+      if (recorderPhase.current === 'recording' || recorderPhase.current === 'paused') {
+        await recorder.stop();
+        recorderPhase.current = 'finalized';
+        finalizedUri.current = recorder.uri;
+      }
+      return finalizedUri.current ?? recorder.uri;
+    })();
+
+    try {
+      return await finalizePromise.current;
+    } finally {
+      finalizePromise.current = null;
+    }
   }, [recorder]);
 
   const play = useCallback(
@@ -73,15 +127,102 @@ export function useLocalAudioRecorder() {
     [player],
   );
 
-  const deleteRecording = useCallback(async (uri: string) => {
-    if (Platform.OS === 'web') {
-      if (uri.startsWith('blob:')) {
-        URL.revokeObjectURL(uri);
-      }
+  const stopPlayback = useCallback(async () => {
+    if (!lastPlayerUri.current) {
       return;
     }
-    await new File(uri).delete();
+    try {
+      player.pause();
+      await Promise.resolve(player.seekTo(0)).catch(() => undefined);
+      player.remove();
+      lastPlayerUri.current = null;
+      setError(null);
+    } catch {
+      throw new Error('Unable to stop saved take playback. Your saved take is still available.');
+    }
+  }, [player]);
+
+  const deleteRecording = useCallback(async (uri: string) => {
+    if (deletedUris.current.has(uri)) {
+      return;
+    }
+    const pendingDelete = deletePromises.current.get(uri);
+    if (pendingDelete) {
+      return pendingDelete;
+    }
+
+    const deletePromise = (async () => {
+      if (lastPlayerUri.current === uri) {
+        await stopPlayback();
+      }
+      if (Platform.OS === 'web') {
+        if (uri.startsWith('blob:')) {
+          URL.revokeObjectURL(uri);
+        }
+        deletedUris.current.add(uri);
+        return;
+      }
+      await new File(uri).delete();
+      deletedUris.current.add(uri);
+    })();
+
+    deletePromises.current.set(uri, deletePromise);
+    try {
+      await deletePromise;
+    } finally {
+      deletePromises.current.delete(uri);
+    }
+  }, [stopPlayback]);
+
+  const discardTransientRecording = useCallback(async () => {
+    if (discardPromise.current) {
+      return discardPromise.current;
+    }
+
+    discardPromise.current = (async () => {
+      const uri = await finalize();
+      if (uri && !retainedUris.current.has(uri)) {
+        await deleteRecording(uri);
+      }
+      recorderPhase.current = 'idle';
+      finalizedUri.current = null;
+    })();
+
+    try {
+      await discardPromise.current;
+    } finally {
+      discardPromise.current = null;
+    }
+  }, [deleteRecording, finalize]);
+
+  const retainFinalizedRecording = useCallback((uri: string) => {
+    retainedUris.current.add(uri);
   }, []);
+
+  const releaseRetainedRecording = useCallback((uri: string) => {
+    retainedUris.current.delete(uri);
+  }, []);
+
+  const reset = useCallback(() => {
+    recorderPhase.current = 'idle';
+    finalizedUri.current = null;
+    finalizePromise.current = null;
+    discardPromise.current = null;
+  }, []);
+
+  useEffect(() => () => {
+    if (recorderPhase.current !== 'idle') {
+      void discardTransientRecording().catch(() => undefined);
+    }
+  }, [discardTransientRecording]);
+
+  const deleteRetainedRecording = useCallback(async (uri: string) => {
+    releaseRetainedRecording(uri);
+    await deleteRecording(uri);
+    if (finalizedUri.current === uri) {
+      reset();
+    }
+  }, [deleteRecording, releaseRetainedRecording, reset]);
 
   return {
     permissionGranted,
@@ -92,8 +233,15 @@ export function useLocalAudioRecorder() {
     requestPermission,
     prepare,
     start,
-    stop,
+    pause,
+    resume,
+    finalize,
     play,
-    deleteRecording,
+    stopPlayback,
+    deleteRecording: deleteRetainedRecording,
+    discardTransientRecording,
+    retainFinalizedRecording,
+    releaseRetainedRecording,
+    reset,
   };
 }

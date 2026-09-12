@@ -38,6 +38,23 @@ export async function saveUnclaimedAttempt(attempt: UnclaimedAttempt) {
   await AsyncStorage.setItem(UNCLAIMED_ATTEMPT_KEY, JSON.stringify(attempt));
 }
 
+export async function saveAndVerifyUnclaimedAttempt(attempt: UnclaimedAttempt) {
+  await saveUnclaimedAttempt(attempt);
+  const savedAttempt = await getUnclaimedAttempt();
+  if (
+    !savedAttempt ||
+    savedAttempt.clientAttemptId !== attempt.clientAttemptId ||
+    savedAttempt.topicId !== attempt.topicId ||
+    savedAttempt.selectedDurationSeconds !== attempt.selectedDurationSeconds ||
+    savedAttempt.completedDurationSeconds !== attempt.completedDurationSeconds ||
+    savedAttempt.completedAt !== attempt.completedAt ||
+    savedAttempt.audioRetained !== attempt.audioRetained
+  ) {
+    throw new Error('Local completion could not be verified.');
+  }
+  return savedAttempt;
+}
+
 export async function getUnclaimedAttempt(): Promise<UnclaimedAttempt | null> {
   const raw = await AsyncStorage.getItem(UNCLAIMED_ATTEMPT_KEY);
   if (!raw) {

@@ -236,3 +236,32 @@
 - Category: planning/scope.
 - Blast radius: the August 31 paid-release target is not credible for a single builder and would encourage unsafe bundling.
 - Guardrail: replan from repository evidence after the R0E contract, lifecycle repair, and minimum Free gates are accepted.
+
+## 2026-09-09 — Stop semantics previously finalized instead of pausing
+
+- Root cause: the first-use screen used one `stopRecording()` path for the Stop button and automatic duration completion.
+- Category: client recorder lifecycle.
+- Blast radius: users could not pause/resume a Drop, and a visible Stop could create a completed attempt, recovery metadata, and Mic Flow work before the user intended to finalize.
+- Guardrail: Stop must dispatch pause only. Zero remaining time is the only automatic finalization path, and completion is exposed only after finalize and verified local recovery save.
+
+## 2026-09-09 — Local completion persistence ran after Flow and was not verified
+
+- Root cause: completion was detected from the already-completed state, then Mic Flow submission was launched before unclaimed-attempt persistence; missing Flow identity also skipped local persistence.
+- Category: client ordering/idempotency.
+- Blast radius: a valid local recording could appear completed without reliable recovery metadata, or Flow work could start before the local recovery contract was durable.
+- Guardrail: UI-D2 finalizes once, writes and reads back local recovery metadata, then enters completed state and starts Mic Flow. Persistence failure keeps the finalized URI recoverable and exposes Retry Save without refinalizing.
+
+## 2026-09-09 — New recorder component tests are outside the default Jest matcher
+
+- Root cause: repository Jest config matches `src/**/*.test.ts`, while UI-D2's authorized component and hook tests are `.test.tsx`.
+- Category: validation configuration.
+- Blast radius: `npm test` can pass without executing the new `HoldToCancel` and `useLocalAudioRecorder` component tests.
+- Guardrail: run `npx jest --runInBand --testMatch '**/*.test.tsx' --runTestsByPath src/features/recording/HoldToCancel.test.tsx src/features/recording/use-local-audio-recorder.test.tsx` for UI-D2 until a later authorized config change expands the matcher.
+
+## 2026-09-09 — Simulator bundle identity drift was masked by Metro JavaScript
+
+- Root cause: a stale generated and installed iOS development client used the obsolete bundle identifier while still loading current JavaScript from Metro.
+- Category: native identity/build hygiene.
+- Blast radius: simulator evidence could appear to validate the current build while actually exercising an older installed bundle identity.
+- Resolution: regenerate ignored native state from `app.json`, build the generated `.xcworkspace`, install the fresh `.app`, and prove `CFBundleIdentifier` from the installed bundle before accepting simulator evidence.
+- Guardrail: sanitized native-build copies must exclude nested `.DerivedData`, module caches, build outputs, protected artifacts, and stale generated `ios/` state. Do not count an old app loading current Metro JavaScript as bundle-identity proof.

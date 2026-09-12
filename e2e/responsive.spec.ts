@@ -67,9 +67,19 @@ test('keeps first use gated, user-driven, and stable through responsive changes'
   const landscapeFlow = await page.getByTestId('flow-region').boundingBox();
   const landscapeBoard = await page.getByLabel(/^Speaking prompt:/).boundingBox();
   const landscapeAction = await page.getByRole('button', { name: 'Let’s Go!' }).boundingBox();
-  expect(landscapePrimary?.width).toBeGreaterThan(1_000);
-  expect(landscapeFlow?.width).toBeGreaterThan(1_000);
-  expect(Math.abs((landscapePrimary?.x ?? 0) - (landscapeFlow?.x ?? 0))).toBeLessThan(2);
+  const landscapeViewport = page.viewportSize();
+  expect(landscapePrimary?.width).toBeGreaterThan(900);
+  expect(landscapeFlow?.width).toBeGreaterThan(900);
+  expect(landscapePrimary?.width).toBeGreaterThan((landscapeViewport?.width ?? 0) * 0.75);
+  expect(landscapeFlow?.width).toBeGreaterThan((landscapeViewport?.width ?? 0) * 0.75);
+  expect(landscapeBoard?.width).toBeGreaterThan((landscapePrimary?.width ?? 0) * 0.8);
+  expect(landscapeFlow?.x).toBeLessThanOrEqual((landscapeBoard?.x ?? 0) + 1);
+  expect((landscapeFlow?.x ?? 0) + (landscapeFlow?.width ?? 0)).toBeLessThanOrEqual(
+    (landscapeViewport?.width ?? 0) + 1,
+  );
+  expect((landscapeFlow?.x ?? 0) + (landscapeFlow?.width ?? 0)).toBeGreaterThanOrEqual(
+    (landscapeBoard?.x ?? 0) + (landscapeBoard?.width ?? 0) - 1,
+  );
   expect(landscapeFlow?.y).toBeGreaterThan((landscapeBoard?.y ?? 0) + (landscapeBoard?.height ?? 0));
   expect(landscapeAction?.y).toBeGreaterThan((landscapeFlow?.y ?? 0) + (landscapeFlow?.height ?? 0));
   await expect(page.getByRole('button', { name: 'Collapse Mic Flow details' })).toHaveAttribute('aria-expanded', 'true');

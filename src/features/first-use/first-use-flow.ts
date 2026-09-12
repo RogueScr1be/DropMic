@@ -30,7 +30,7 @@ export function phaseForRecordingState(state: RecordingState): FirstUsePhase | n
   if (state === 'countdown') {
     return 'countdown';
   }
-  if (state === 'recording') {
+  if (state === 'recording' || state === 'paused' || state === 'completing' || state === 'cancelling') {
     return 'recording';
   }
   if (state === 'completed') {
@@ -56,4 +56,41 @@ export function shouldPlayClack(soundEnabled: boolean) {
 
 export function shouldAnimateSolari(reducedMotion: boolean) {
   return !reducedMotion;
+}
+
+export type RecoveryPresentation = 'retained-take' | 'auth-recovery' | null;
+
+export function recoveryPresentationForState({
+  hasAuthRecovery,
+  hasHiddenCompletedTake,
+  hasRetainedCompletedTake,
+}: {
+  hasAuthRecovery: boolean;
+  hasHiddenCompletedTake: boolean;
+  hasRetainedCompletedTake: boolean;
+}): RecoveryPresentation {
+  if (hasHiddenCompletedTake || hasRetainedCompletedTake) {
+    return 'retained-take';
+  }
+  return hasAuthRecovery ? 'auth-recovery' : null;
+}
+
+export type RecordingStartDecision = 'start' | 'wait-for-retained-take-hydration' | 'confirm-retained-take-replacement';
+
+export function recordingStartDecision({
+  hasRetainedTake,
+  replaceRetainedTake,
+  retainedTakeHydrating,
+}: {
+  hasRetainedTake: boolean;
+  replaceRetainedTake: boolean;
+  retainedTakeHydrating: boolean;
+}): RecordingStartDecision {
+  if (retainedTakeHydrating) {
+    return 'wait-for-retained-take-hydration';
+  }
+  if (hasRetainedTake && !replaceRetainedTake) {
+    return 'confirm-retained-take-replacement';
+  }
+  return 'start';
 }

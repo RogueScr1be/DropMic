@@ -16,6 +16,9 @@
 - Validate with `npm run typecheck`, `npm run lint`, `npm test`, `npm run web:export`, and `git diff --check`.
 - Do not claim native or Safari support without a real-device/manual result.
 - Start this repository with `npm run start:micdrop` on port 8082 after stopping unrelated Expo/Metro processes; verify the bundle before opening a simulator.
+- Regenerate ignored `ios/` from `app.json` after bundle identity or native configuration changes; do not hand-edit or track generated native project files.
+- Sanitized native-build copies must exclude `.env.local`, protected artifacts, nested `.DerivedData`, module caches, build outputs, and stale generated `ios/` state.
+- Prove simulator bundle identity from a fresh reproducible `.xcworkspace` build and installed `.app`; an old app loading current Metro JavaScript is not identity evidence.
 - Keep R0B presentation orchestration separate from the audio adapter; only change the adapter for a demonstrated regression.
 - Run Supabase SQL tests only with a running local Docker stack or configured project; do not claim RLS behavior from static migration inspection.
 - `npx supabase` is available in this environment; the `supabase` binary is not on PATH. Keep `supabase/config.toml` aligned with anonymous local development.

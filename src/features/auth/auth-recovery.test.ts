@@ -7,6 +7,7 @@ import {
   createClientAttemptId,
   getPendingAuth,
   getUnclaimedAttempt,
+  saveAndVerifyUnclaimedAttempt,
   savePendingAuth,
   saveUnclaimedAttempt,
 } from './auth-recovery';
@@ -29,7 +30,23 @@ describe('local attempt recovery', () => {
     await saveUnclaimedAttempt(attempt);
 
     await expect(getUnclaimedAttempt()).resolves.toEqual(attempt);
-    expect(JSON.parse((await AsyncStorage.getItem('@micdrop/r0c/unclaimed-attempt')) as string)).not.toHaveProperty('audioUri');
+    const stored = JSON.parse((await AsyncStorage.getItem('@micdrop/r0c/unclaimed-attempt')) as string);
+    expect(stored).not.toHaveProperty('audioUri');
+    expect(stored).not.toHaveProperty('localUri');
+  });
+
+  it('verifies the saved attempt before exposing completion', async () => {
+    const attempt = {
+      clientAttemptId: 'client-verified',
+      topicId: 'ordinary-voltage',
+      selectedDurationSeconds: 60 as const,
+      completedDurationSeconds: 42,
+      completedAt: new Date(1000).toISOString(),
+      audioRetained: false as const,
+    };
+
+    await expect(saveAndVerifyUnclaimedAttempt(attempt)).resolves.toEqual(attempt);
+    await expect(getUnclaimedAttempt()).resolves.toEqual(attempt);
   });
 
   it('clears recovery only when explicitly requested', async () => {
