@@ -1,9 +1,9 @@
-import { useEffect, useMemo } from 'react';
-import { Animated, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import { Animated, Platform, StyleSheet, Text, View } from 'react-native';
 
 import { createCompletionGate, shouldAnimateSolari } from '@/features/first-use/first-use-flow';
-import { colors, motion, radii, spacing, typography } from '@/ui/theme';
-import { useClackSound } from './solari-sound';
+import { colors, radii, spacing } from '@/ui/theme';
+import { tapSolariHaptic, useClackSound } from './solari-sound';
 
 type SolariBoardProps = {
   density: 'compact-landscape' | 'phone' | 'tablet';
@@ -15,47 +15,40 @@ type SolariBoardProps = {
 
 export const SOLARI_ROW_COUNT = 5;
 export const SOLARI_COLUMN_COUNT = 10;
-export const SOLARI_TILE_COUNT = SOLARI_ROW_COUNT * SOLARI_COLUMN_COUNT;
+export const SOLARI_MAX_COLUMN_COUNT = 12;
+export const SOLARI_MIN_TILE_COUNT = SOLARI_ROW_COUNT * SOLARI_COLUMN_COUNT;
+export const SOLARI_MAX_TILE_COUNT = SOLARI_ROW_COUNT * SOLARI_MAX_COLUMN_COUNT;
+export const SOLARI_REVEAL_DURATION_MS = 980;
 
-function splitLongWord(word: string) {
+const SOLARI_SHUFFLE_INTERVAL_MS = 58;
+const SOLARI_HAPTIC_INTERVAL_MS = 125;
+const DECOY_CHARACTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ?!';
+
+function splitLongWord(word: string, columnCount: number) {
   const chunks: string[] = [];
-  for (let index = 0; index < word.length; index += SOLARI_COLUMN_COUNT) {
-    chunks.push(word.slice(index, index + SOLARI_COLUMN_COUNT));
+  for (let index = 0; index < word.length; index += columnCount) {
+    chunks.push(word.slice(index, index + columnCount));
   }
   return chunks;
 }
 
-function justifyWords(words: string[], isLastLine: boolean) {
-  if (words.length === 0) {
-    return '';
-  }
-  if (words.length === 1 || isLastLine) {
-    return words.join(' ');
-  }
-
-  const characterCount = words.reduce((total, word) => total + word.length, 0);
-  const gapCount = words.length - 1;
-  const spacesToDistribute = Math.max(gapCount, SOLARI_COLUMN_COUNT - characterCount);
-  const baseSpaces = Math.floor(spacesToDistribute / gapCount);
-  let extraSpaces = spacesToDistribute % gapCount;
-
-  return words.reduce((line, word, index) => {
-    if (index === 0) {
-      return word;
-    }
-    const spaces = baseSpaces + (extraSpaces > 0 ? 1 : 0);
-    extraSpaces -= extraSpaces > 0 ? 1 : 0;
-    return `${line}${' '.repeat(spaces)}${word}`;
-  }, '');
+function normalizedPromptWords(prompt: string, columnCount: number) {
+  return prompt
+    .toUpperCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .flatMap((word) => word.length > columnCount ? splitLongWord(word, columnCount) : word)
+    .filter(Boolean);
 }
 
-function wrapSolariPrompt(prompt: string) {
+function wrapSolariPrompt(prompt: string, columnCount: number) {
   const words = prompt
     .toUpperCase()
     .replace(/\s+/g, ' ')
     .trim()
     .split(' ')
-    .flatMap((word) => word.length > SOLARI_COLUMN_COUNT ? splitLongWord(word) : word)
+    .flatMap((word) => word.length > columnCount ? splitLongWord(word, columnCount) : word)
     .filter(Boolean);
   const lines: string[][] = [];
   let currentLine: string[] = [];
@@ -63,7 +56,7 @@ function wrapSolariPrompt(prompt: string) {
 
   words.forEach((word) => {
     const nextLength = currentLine.length === 0 ? word.length : currentLength + 1 + word.length;
-    if (currentLine.length > 0 && nextLength > SOLARI_COLUMN_COUNT) {
+    if (currentLine.length > 0 && nextLength > columnCount) {
       lines.push(currentLine);
       currentLine = [word];
       currentLength = word.length;
@@ -77,24 +70,45 @@ function wrapSolariPrompt(prompt: string) {
     lines.push(currentLine);
   }
 
-  return lines.slice(0, SOLARI_ROW_COUNT).map((line, index, wrappedLines) => justifyWords(line, index === wrappedLines.length - 1));
+  return lines.map((line) => line.join(' '));
+}
+
+function chooseColumnCount(prompt: string) {
+  for (let columnCount = SOLARI_COLUMN_COUNT; columnCount <= SOLARI_MAX_COLUMN_COUNT; columnCount += 1) {
+    if (wrapSolariPrompt(prompt, columnCount).length <= SOLARI_ROW_COUNT) {
+      return columnCount;
+    }
+  }
+  return SOLARI_MAX_COLUMN_COUNT;
+}
+
+function randomDecoyCharacter(index: number) {
+  return DECOY_CHARACTERS[index % DECOY_CHARACTERS.length];
+}
+
+function buildDecoyCharacters(total: number, offset: number) {
+  return Array.from({ length: total }, (_, index) => randomDecoyCharacter(index + offset));
 }
 
 export function buildSolariGrid(prompt: string): string[][] {
-  const characters = wrapSolariPrompt(prompt).flatMap((line) => {
-    const lineCharacters = Array.from(line).slice(0, SOLARI_COLUMN_COUNT);
+  const columnCount = chooseColumnCount(prompt);
+  const lines = wrapSolariPrompt(prompt, columnCount);
+  const fallbackWords = normalizedPromptWords(prompt, columnCount);
+  const fittedLines = lines.length <= SOLARI_ROW_COUNT ? lines : fallbackWords.slice(0, SOLARI_ROW_COUNT);
+  const characters = fittedLines.flatMap((line) => {
+    const lineCharacters = Array.from(line).slice(0, columnCount);
     return [
       ...lineCharacters,
-      ...Array<string>(SOLARI_COLUMN_COUNT - lineCharacters.length).fill(''),
+      ...Array<string>(columnCount - lineCharacters.length).fill(''),
     ];
   });
-  if (characters.length > SOLARI_TILE_COUNT) {
-    throw new Error(`Solari prompt exceeds ${SOLARI_TILE_COUNT} positions.`);
+  if (characters.length > SOLARI_MAX_TILE_COUNT) {
+    throw new Error(`Solari prompt exceeds ${SOLARI_MAX_TILE_COUNT} positions.`);
   }
-  const cells = [...characters, ...Array<string>(SOLARI_TILE_COUNT - characters.length).fill('')];
+  const cells = [...characters, ...Array<string>((SOLARI_ROW_COUNT * columnCount) - characters.length).fill('')];
   return Array.from(
     { length: SOLARI_ROW_COUNT },
-    (_, rowIndex) => cells.slice(rowIndex * SOLARI_COLUMN_COUNT, (rowIndex + 1) * SOLARI_COLUMN_COUNT),
+    (_, rowIndex) => cells.slice(rowIndex * columnCount, (rowIndex + 1) * columnCount),
   );
 }
 
@@ -108,28 +122,28 @@ export function SolariBoard({
   const playClack = useClackSound(true);
   const rows = useMemo(() => buildSolariGrid(prompt), [prompt]);
   const characters = useMemo(() => rows.flat(), [rows]);
-  const animatedTileCount = useMemo(() => {
-    for (let index = characters.length - 1; index >= 0; index -= 1) {
-      if (characters[index] !== '') {
-        return index + 1;
-      }
-    }
-    return 0;
-  }, [characters]);
+  const shouldAnimateReveal = shouldAnimateSolari(reducedMotion);
+  const [displayCharacters, setDisplayCharacters] = useState(() =>
+    shouldAnimateReveal ? buildDecoyCharacters(characters.length, 0) : characters,
+  );
+  const visibleCharacters = shouldAnimateReveal ? displayCharacters : characters;
   const flipValues = useMemo(
-    () => characters.map((_, index) => new Animated.Value(reducedMotion || index >= animatedTileCount ? 1 : 0)),
-    [animatedTileCount, characters, reducedMotion],
+    () => characters.map(() => new Animated.Value(reducedMotion ? 1 : 0)),
+    [characters, reducedMotion],
   );
 
   useEffect(() => {
     const complete = createCompletionGate(onComplete);
     let cancelled = false;
     const timers: ReturnType<typeof setTimeout>[] = [];
-    const showStatic = !shouldAnimateSolari(reducedMotion);
+    const intervals: ReturnType<typeof setInterval>[] = [];
+    let decoyOffset = 0;
+    const showStatic = !shouldAnimateReveal;
 
-    flipValues.forEach((value, index) => value.setValue(showStatic || index >= animatedTileCount ? 1 : 0));
+    flipValues.forEach((value) => value.setValue(showStatic ? 1 : 0));
 
     if (showStatic) {
+      playClack();
       const timer = setTimeout(complete, 0);
       timers.push(timer);
       return () => {
@@ -139,55 +153,76 @@ export function SolariBoard({
     }
 
     try {
-      characters.slice(0, animatedTileCount).forEach((character, index) => {
-        timers.push(
-          setTimeout(() => {
-            if (!cancelled && character !== '') {
-              playClack();
-            }
-          }, index * motion.solariStagger),
-        );
-      });
-
-      Animated.stagger(
-        motion.solariStagger,
-        flipValues.slice(0, animatedTileCount).map((value) =>
+      playClack();
+      const initialDecoyTimer = setTimeout(() => {
+        if (!cancelled) {
+          setDisplayCharacters(buildDecoyCharacters(characters.length, decoyOffset));
+        }
+      }, 0);
+      timers.push(initialDecoyTimer);
+      const shuffleTimer = setInterval(() => {
+        if (!cancelled) {
+          decoyOffset += 7;
+          setDisplayCharacters(buildDecoyCharacters(characters.length, decoyOffset));
+        }
+      }, SOLARI_SHUFFLE_INTERVAL_MS);
+      intervals.push(shuffleTimer);
+      const hapticTimer = setInterval(() => {
+        if (!cancelled) {
+          tapSolariHaptic();
+        }
+      }, SOLARI_HAPTIC_INTERVAL_MS);
+      intervals.push(hapticTimer);
+      const animations = flipValues.map((value) =>
+        Animated.loop(
           Animated.sequence([
             Animated.timing(value, {
-              duration: 48,
-              toValue: 0.52,
-              useNativeDriver: true,
-            }),
-            Animated.timing(value, {
-              duration: 34,
-              toValue: 0.86,
-              useNativeDriver: true,
-            }),
-            Animated.timing(value, {
-              duration: 42,
+              duration: 46,
               toValue: 1,
               useNativeDriver: true,
             }),
+            Animated.timing(value, {
+              duration: 46,
+              toValue: 0,
+              useNativeDriver: true,
+            }),
           ]),
+          { iterations: Math.ceil(SOLARI_REVEAL_DURATION_MS / 92) },
         ),
-      ).start(({ finished }) => {
-        if (finished && !cancelled) {
-          complete();
-        }
-      });
+      );
+      const parallelAnimation = Animated.parallel(animations);
+      parallelAnimation.start();
+      timers.push(
+        setTimeout(() => {
+          clearInterval(shuffleTimer);
+          clearInterval(hapticTimer);
+          if (!cancelled) {
+            parallelAnimation.stop();
+            setDisplayCharacters(characters);
+            flipValues.forEach((value) => value.setValue(1));
+            complete();
+          }
+        }, SOLARI_REVEAL_DURATION_MS),
+      );
     } catch {
       if (!cancelled) {
         flipValues.forEach((value) => value.setValue(1));
-        complete();
+        timers.push(
+          setTimeout(() => {
+            setDisplayCharacters(characters);
+            complete();
+          }, 0),
+        );
       }
     }
 
     return () => {
       cancelled = true;
       timers.forEach(clearTimeout);
+      intervals.forEach(clearInterval);
       flipValues.forEach((value) => value.stopAnimation());
     };
-  }, [animatedTileCount, characters, flipValues, onComplete, playClack, reducedMotion, revealKey]);
+  }, [characters, flipValues, onComplete, playClack, revealKey, shouldAnimateReveal]);
 
   return (
     <View
@@ -204,8 +239,9 @@ export function SolariBoard({
             key={`row-${rowIndex}`}
             style={styles.row}
             testID={`solari-row-${rowIndex}`}>
-            {row.map((character, columnIndex) => {
-              const index = rowIndex * SOLARI_COLUMN_COUNT + columnIndex;
+            {row.map((_, columnIndex) => {
+              const index = rows.slice(0, rowIndex).reduce((total, currentRow) => total + currentRow.length, 0) + columnIndex;
+              const displayCharacter = visibleCharacters[index] ?? '';
               return (
                 <Animated.View
                   key={`${revealKey}-${index}`}
@@ -213,7 +249,7 @@ export function SolariBoard({
                     styles.cell,
                     density === 'compact-landscape' && styles.cellCompact,
                     density === 'tablet' && styles.cellTablet,
-                    shouldAnimateSolari(reducedMotion) && {
+                    shouldAnimateReveal && {
                       transform: [
                         { perspective: 500 },
                         {
@@ -238,9 +274,10 @@ export function SolariBoard({
                       styles.character,
                       density === 'compact-landscape' && styles.characterCompact,
                       density === 'tablet' && styles.characterTablet,
-                      character === ' ' && styles.wordSpace,
+                      displayCharacter === 'I' && styles.characterI,
+                      displayCharacter === ' ' && styles.wordSpace,
                     ]}>
-                    {character === ' ' ? '' : character}
+                    {displayCharacter === ' ' ? '' : displayCharacter}
                   </Text>
                   <View style={styles.cellDivider} />
                 </Animated.View>
@@ -299,13 +336,14 @@ const styles = StyleSheet.create({
   },
   character: {
     color: colors.inkStrong,
-    fontFamily: typography.displayFamily,
+    fontFamily: Platform.select({ android: 'monospace', ios: 'Menlo', web: 'ui-monospace, SFMono-Regular, Menlo, monospace' }),
     fontSize: 31,
     fontWeight: '900',
     includeFontPadding: false,
     lineHeight: 34,
   },
   characterCompact: { fontSize: 21, lineHeight: 24 },
-  characterTablet: { fontSize: 43, lineHeight: 48 },
+  characterTablet: { fontSize: 45, fontWeight: '900', letterSpacing: -1, lineHeight: 50 },
+  characterI: { transform: [{ scaleX: 1.18 }] },
   wordSpace: { color: 'transparent' },
 });

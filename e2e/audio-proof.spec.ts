@@ -203,7 +203,9 @@ async function reachDurationSelection(page: Page) {
   await page.getByRole('checkbox', { name: 'I confirm I am 13 or older' }).click();
   await page.getByRole('button', { name: 'Continue' }).click();
   await expect(page.getByTestId('topic-reveal')).toBeVisible({ timeout: 5_000 });
-  await expect(page.getByTestId(/^solari-tile-/)).toHaveCount(50);
+  const solariTileCount = await page.getByTestId(/^solari-tile-/).count();
+  expect(solariTileCount).toBeGreaterThanOrEqual(50);
+  expect(solariTileCount).toBeLessThanOrEqual(60);
   await expect(page.getByRole('switch', { name: /reveal sound/i })).toHaveCount(0);
   await expect(page.getByText(/drop ready/i)).toHaveCount(0);
   await page.getByRole('button', { name: 'Let’s Go!' }).click();

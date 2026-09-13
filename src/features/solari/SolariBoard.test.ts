@@ -4,11 +4,13 @@ import { Text } from 'react-native';
 import { act, create } from 'react-test-renderer';
 
 import { createCompletionGate, shouldAnimateSolari } from '@/features/first-use/first-use-flow';
+import { TOPIC_CATALOG } from '@/features/topics/topic-catalog';
 import {
   buildSolariGrid,
   SOLARI_COLUMN_COUNT,
+  SOLARI_MAX_TILE_COUNT,
+  SOLARI_MIN_TILE_COUNT,
   SOLARI_ROW_COUNT,
-  SOLARI_TILE_COUNT,
   SolariBoard,
 } from './SolariBoard';
 
@@ -46,7 +48,7 @@ describe('Solari board contracts', () => {
     expect(completions).toBe(1);
   });
 
-  it('renders exactly five rows of ten physical tiles', () => {
+  it('renders exactly five rows with adaptive physical columns', () => {
     const tree = renderBoard('Short prompt?');
     const rows = tree.root.findAll((node) => typeof node.props.testID === 'string' && node.props.testID.startsWith('solari-row-'));
     const tiles = tree.root.findAll((node) => typeof node.props.testID === 'string' && node.props.testID.startsWith('solari-tile-'));
@@ -54,32 +56,54 @@ describe('Solari board contracts', () => {
     const tileIds = new Set(tiles.map((tile) => tile.props.testID));
 
     expect(rowIds.size).toBe(SOLARI_ROW_COUNT);
-    expect(tileIds.size).toBe(SOLARI_TILE_COUNT);
+    expect(tileIds.size).toBeGreaterThanOrEqual(SOLARI_MIN_TILE_COUNT);
+    expect(tileIds.size).toBeLessThanOrEqual(SOLARI_MAX_TILE_COUNT);
     rows.forEach((row) => {
       const renderedTileIds = new Set(
         row
           .findAll((node) => typeof node.props.testID === 'string' && node.props.testID.startsWith('solari-tile-'))
           .map((tile) => tile.props.testID),
       );
-      expect(renderedTileIds.size).toBe(SOLARI_COLUMN_COUNT);
+      expect(renderedTileIds.size).toBeGreaterThanOrEqual(SOLARI_COLUMN_COUNT);
     });
-    buildSolariGrid('Short prompt?').forEach((row) => expect(row).toHaveLength(SOLARI_COLUMN_COUNT));
+    buildSolariGrid('Short prompt?').forEach((row) => expect(row.length).toBeGreaterThanOrEqual(SOLARI_COLUMN_COUNT));
   });
 
-  it('wraps by whole words into the fixed tile grid', () => {
+  it('wraps by whole words into a complete adaptive grid', () => {
     const prompt = 'Which everyday invention deserves more credit?';
     const grid = buildSolariGrid(prompt);
 
     expect(Array.from(prompt)).toHaveLength(46);
-    expect(grid.flat()).toHaveLength(SOLARI_TILE_COUNT);
+    expect(grid.flat()).toHaveLength(60);
     expect(grid.map((row) => row.join(''))).toEqual([
       'WHICH',
       'EVERYDAY',
       'INVENTION',
       'DESERVES',
-      'MORE',
+      'MORE CREDIT?',
     ]);
-    grid.forEach((row) => expect(row).toHaveLength(SOLARI_COLUMN_COUNT));
+    grid.forEach((row) => expect(row).toHaveLength(12));
+  });
+
+  it('avoids excessive inter-word gaps and missing letters', () => {
+    const smallJoyRows = buildSolariGrid('What is a small joy you make time for?').map((row) => row.join(''));
+    const changedRows = buildSolariGrid('What is something you changed your mind about?').map((row) => row.join(''));
+
+    expect(smallJoyRows).toContain('WHAT IS A');
+    expect(changedRows).toContain('YOU CHANGED');
+    [...smallJoyRows, ...changedRows].forEach((row) => {
+      expect(row).not.toMatch(/ {2,}/);
+      expect(row).not.toContain('TME');
+    });
+  });
+
+  it('preserves every non-space character from each catalog prompt', () => {
+    TOPIC_CATALOG.forEach((topic) => {
+      const expected = topic.prompt.toUpperCase().replace(/\s/g, '');
+      const actual = buildSolariGrid(topic.prompt).flat().join('').replace(/\s/g, '');
+
+      expect(actual).toBe(expected);
+    });
   });
 
   it('keeps common words intact instead of splitting them across rows', () => {
@@ -101,7 +125,7 @@ describe('Solari board contracts', () => {
 
     expect(board.props.accessibilityRole).toBe('text');
     expect(emptyTile.findByType(Text).props.children).toBe('');
-    expect(buildSolariGrid(prompt).flat()[4]).toBe('P');
+    expect(buildSolariGrid(prompt).map((row) => row.join(''))).toContain('A PAUSE,');
   });
 
   it('retains the fixed grid after a reroll on the reduced-motion path', () => {
@@ -121,6 +145,7 @@ describe('Solari board contracts', () => {
         .findAll((node) => typeof node.props.testID === 'string' && node.props.testID.startsWith('solari-tile-'))
         .map((tile) => tile.props.testID),
     );
-    expect(tileIds.size).toBe(50);
+    expect(tileIds.size).toBeGreaterThanOrEqual(SOLARI_MIN_TILE_COUNT);
+    expect(tileIds.size).toBeLessThanOrEqual(SOLARI_MAX_TILE_COUNT);
   });
 });

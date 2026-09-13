@@ -47,7 +47,9 @@ test('keeps first use gated, user-driven, and stable through responsive changes'
   await expect(page.getByText(/clack \/ (on|off)/i)).toHaveCount(0);
   await expect(page.getByText(/drop ready/i)).toHaveCount(0);
   await expect(page.getByTestId(/^solari-row-/)).toHaveCount(5);
-  await expect(page.getByTestId(/^solari-tile-/)).toHaveCount(50);
+  const solariTileCount = await page.getByTestId(/^solari-tile-/).count();
+  expect(solariTileCount).toBeGreaterThanOrEqual(50);
+  expect(solariTileCount).toBeLessThanOrEqual(60);
   const flowToggle = page.getByRole('button', { name: 'Expand Flow details' });
   await expect(flowToggle).toHaveAttribute('aria-expanded', 'false');
   await expect(page.getByTestId('mic-flow-details')).toBeHidden();
