@@ -13,7 +13,7 @@ export type PendingAuth = {
   createdAt: number;
 };
 
-export type AuthFlowResumeStep = 'explanation' | 'otp' | 'sign_in_otp' | 'onboarding';
+export type AuthFlowResumeStep = 'explanation' | 'otp' | 'sign_in_otp' | 'complete';
 
 type AuthSessionIdentity = {
   user?: {
@@ -123,7 +123,7 @@ export async function clearPendingAuth() {
 
 export function authFlowResumeStep(session: AuthSessionIdentity, pendingAuth: PendingAuth | null): AuthFlowResumeStep {
   if (session?.user && session.user.is_anonymous === false) {
-    return 'onboarding';
+    return 'complete';
   }
   if (pendingAuth?.intent === 'existing-sign-in') {
     return 'sign_in_otp';

@@ -24,6 +24,7 @@ import {
   createMicFlowSnapshotCoordinator,
   getMicFlowSnapshot,
   getMicFlowOwnerId,
+  prepareAnonymousMicFlowSession,
   recordMicFlowCompletion,
   type MicFlowRecordingIdentity,
 } from './mic-flow-service';
@@ -63,6 +64,12 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+async function flushPromises() {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 describe('Mic Flow completion service', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -95,9 +102,187 @@ describe('Mic Flow completion service', () => {
     expect(mockSupabase.auth.signInAnonymously).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps recording startup bounded when session creation hangs', async () => {
-    mockSupabase.auth.getSession.mockReturnValueOnce(new Promise(() => undefined));
-    await expect(establishAnonymousMicFlowSession({ timeoutMs: 1 })).resolves.toBeNull();
+  it('uses a cached session without creating another anonymous user', async () => {
+    mockSupabase.auth.getSession.mockResolvedValueOnce({
+      data: { session: { user: { id: 'cached-owner' }, access_token: 'cached-token' } },
+      error: null,
+    });
+    await expect(prepareAnonymousMicFlowSession()).resolves.toEqual({
+      status: 'ready',
+      identity: { userId: 'cached-owner', accessToken: 'cached-token' },
+    });
+    expect(mockSupabase.auth.signInAnonymously).not.toHaveBeenCalled();
+  });
+
+  it('accepts a cold anonymous signup that completes at 852ms', async () => {
+    jest.useFakeTimers();
+    try {
+      mockSupabase.auth.signInAnonymously.mockImplementationOnce(() => new Promise((resolve) => {
+        setTimeout(() => resolve({
+          data: { session: { user: { id: 'anon-1' }, access_token: 'captured-token' } },
+          error: null,
+        }), 852);
+      }));
+      const pending = prepareAnonymousMicFlowSession();
+      await jest.advanceTimersByTimeAsync(852);
+      await expect(pending).resolves.toEqual({ status: 'ready', identity });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('accepts a 1320ms owner lookup without timing out', async () => {
+    jest.useFakeTimers();
+    try {
+      mockGetSession.mockImplementationOnce(() => new Promise((resolve) => {
+        setTimeout(() => resolve({ user: { id: 'anon-1' }, access_token: 'current-token' } as any), 1320);
+      }));
+      const pending = getMicFlowOwnerId();
+      await jest.advanceTimersByTimeAsync(1320);
+      await expect(pending).resolves.toBe('anon-1');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('does not time out a preparation that completes below 5000ms', async () => {
+    jest.useFakeTimers();
+    try {
+      mockSupabase.auth.signInAnonymously.mockImplementationOnce(() => new Promise((resolve) => {
+        setTimeout(() => resolve({
+          data: { session: { user: { id: 'anon-1' }, access_token: 'captured-token' } },
+          error: null,
+        }), 4900);
+      }));
+      const pending = prepareAnonymousMicFlowSession();
+      await jest.advanceTimersByTimeAsync(4900);
+      await expect(pending).resolves.toEqual({ status: 'ready', identity });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('classifies a preparation that exceeds 5000ms as a timeout', async () => {
+    jest.useFakeTimers();
+    try {
+      mockSupabase.auth.signInAnonymously.mockImplementationOnce(() => new Promise((resolve) => {
+        setTimeout(() => resolve({
+          data: { session: { user: { id: 'anon-1' }, access_token: 'captured-token' } },
+          error: null,
+        }), 6000);
+      }));
+      const pending = prepareAnonymousMicFlowSession();
+      await jest.advanceTimersByTimeAsync(5000);
+      await expect(pending).resolves.toEqual({ status: 'unavailable', reason: 'timeout' });
+      await jest.advanceTimersByTimeAsync(1000);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('shares one anonymous signup across concurrent preparation requests', async () => {
+    const signup = deferred<any>();
+    mockSupabase.auth.signInAnonymously.mockReturnValueOnce(signup.promise);
+    const first = prepareAnonymousMicFlowSession();
+    const second = prepareAnonymousMicFlowSession();
+    await Promise.resolve();
+    expect(mockSupabase.auth.signInAnonymously).toHaveBeenCalledTimes(1);
+    signup.resolve({
+      data: { session: { user: { id: 'anon-1' }, access_token: 'captured-token' } },
+      error: null,
+    });
+    await expect(first).resolves.toEqual({ status: 'ready', identity });
+    await expect(second).resolves.toEqual({ status: 'ready', identity });
+  });
+
+  it('keeps rapid repeated preparation requests single-flight', async () => {
+    const signup = deferred<any>();
+    mockSupabase.auth.signInAnonymously.mockReturnValueOnce(signup.promise);
+    const requests = [1, 2, 3, 4].map(() => prepareAnonymousMicFlowSession());
+    await Promise.resolve();
+    expect(mockSupabase.auth.signInAnonymously).toHaveBeenCalledTimes(1);
+    signup.resolve({
+      data: { session: { user: { id: 'anon-1' }, access_token: 'captured-token' } },
+      error: null,
+    });
+    await expect(Promise.all(requests)).resolves.toEqual(requests.map(() => ({ status: 'ready', identity })));
+  });
+
+  it('does not start a second signup after a caller timeout while the first remains unresolved', async () => {
+    jest.useFakeTimers();
+    try {
+      const signup = deferred<any>();
+      mockSupabase.auth.signInAnonymously.mockReturnValueOnce(signup.promise);
+      const first = prepareAnonymousMicFlowSession();
+      await jest.advanceTimersByTimeAsync(5000);
+      await expect(first).resolves.toEqual({ status: 'unavailable', reason: 'timeout' });
+      const second = prepareAnonymousMicFlowSession();
+      await jest.advanceTimersByTimeAsync(5000);
+      await expect(second).resolves.toEqual({ status: 'unavailable', reason: 'timeout' });
+      expect(mockSupabase.auth.signInAnonymously).toHaveBeenCalledTimes(1);
+      signup.resolve({
+        data: { session: { user: { id: 'anon-1' }, access_token: 'captured-token' } },
+        error: null,
+      });
+      await flushPromises();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('checks the persisted session before a later retry after signup settles', async () => {
+    jest.useFakeTimers();
+    try {
+      const signup = deferred<any>();
+      mockSupabase.auth.signInAnonymously.mockReturnValueOnce(signup.promise);
+      const first = prepareAnonymousMicFlowSession();
+      await jest.advanceTimersByTimeAsync(5000);
+      await expect(first).resolves.toEqual({ status: 'unavailable', reason: 'timeout' });
+      signup.resolve({
+        data: { session: { user: { id: 'anon-1' }, access_token: 'captured-token' } },
+        error: null,
+      });
+      await flushPromises();
+      mockSupabase.auth.getSession.mockResolvedValueOnce({
+        data: { session: { user: { id: 'anon-1' }, access_token: 'captured-token' } },
+        error: null,
+      });
+      await expect(prepareAnonymousMicFlowSession()).resolves.toEqual({ status: 'ready', identity });
+      expect(mockSupabase.auth.signInAnonymously).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  for (const [reason, failure] of [
+    ['network', { status: 503, message: 'network unavailable' }],
+    ['auth', { status: 401, message: 'invalid credentials' }],
+    ['invalid_session', null],
+    ['unknown', { message: 'unexpected provider response' }],
+  ] as const) {
+    it(`retains the ${reason} owner failure classification`, async () => {
+      if (reason === 'invalid_session') {
+        mockSupabase.auth.signInAnonymously.mockResolvedValueOnce({ data: { session: null }, error: null });
+      } else {
+        mockSupabase.auth.signInAnonymously.mockRejectedValueOnce(failure);
+      }
+      await expect(prepareAnonymousMicFlowSession()).resolves.toEqual({ status: 'unavailable', reason });
+    });
+  }
+
+  it('does not log tokens, user IDs, email addresses, or provider metadata', async () => {
+    const warning = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    mockSupabase.auth.signInAnonymously.mockRejectedValueOnce({
+      status: 503,
+      code: 'token-bearing-provider-error',
+      message: 'email=user@example.com access_token=secret-token user_id=anon-1',
+    });
+    await prepareAnonymousMicFlowSession();
+    const output = warning.mock.calls.flat().join(' ');
+    expect(output).not.toContain('secret-token');
+    expect(output).not.toContain('user@example.com');
+    expect(output).not.toContain('anon-1');
+    warning.mockRestore();
   });
 
   it('ignores anonymous establishment that resolves after sign-out before identity capture', async () => {

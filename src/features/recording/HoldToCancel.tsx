@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { colors, minimumTouchTarget, radii, spacing, typography } from '@/ui/theme';
+import { colors, radii, spacing } from '@/ui/theme';
 
 export const HOLD_TO_CANCEL_MS = 1_500;
 
@@ -21,23 +21,24 @@ export function HoldToCancel({
   reducedMotion,
 }: HoldToCancelProps) {
   const [holding, setHolding] = useState(false);
-  const [confirming, setConfirming] = useState(false);
   const [progress, setProgress] = useState(0);
   const startedAt = useRef<number | null>(null);
   const cancelFired = useRef(false);
+  const gestureActive = useRef(false);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const clearHold = (updateState = true) => {
+  const clearHold = (resetCancellation = true) => {
     if (timer.current) {
       clearInterval(timer.current);
       timer.current = null;
     }
     startedAt.current = null;
-    cancelFired.current = false;
-    if (updateState) {
-      setHolding(false);
-      setProgress(0);
+    gestureActive.current = false;
+    if (resetCancellation) {
+      cancelFired.current = false;
     }
+    setHolding(false);
+    setProgress(0);
   };
 
   const finishCancel = () => {
@@ -45,27 +46,28 @@ export function HoldToCancel({
       return;
     }
     cancelFired.current = true;
-    setConfirming(false);
-    setProgress(1);
+    clearHold(false);
     onCancel();
   };
 
   const beginHold = () => {
-    if (disabled || holding) {
+    if (disabled || gestureActive.current || cancelFired.current) {
       return;
     }
-    setConfirming(false);
+    gestureActive.current = true;
     startedAt.current = Date.now();
     cancelFired.current = false;
     setHolding(true);
-    setProgress(reducedMotion ? 1 : 0);
+    setProgress(0);
     onHoldStart?.();
     timer.current = setInterval(() => {
       if (startedAt.current === null) {
         return;
       }
       const nextProgress = Math.min(1, (Date.now() - startedAt.current) / HOLD_TO_CANCEL_MS);
-      setProgress(nextProgress);
+      if (!reducedMotion) {
+        setProgress(nextProgress);
+      }
       if (nextProgress >= 1) {
         finishCancel();
       }
@@ -73,92 +75,42 @@ export function HoldToCancel({
   };
 
   const releaseHold = () => {
-    if (!holding || cancelFired.current) {
+    if (!gestureActive.current || cancelFired.current) {
       return;
     }
     clearHold();
     onHoldRelease?.();
   };
 
-  const openConfirmation = () => {
-    if (disabled || confirming) {
-      return;
+  useEffect(() => {
+    if (disabled && gestureActive.current && !cancelFired.current) {
+      clearHold();
     }
-    setConfirming(true);
-  };
-
-  const keepRecording = () => {
-    if (disabled) {
-      return;
-    }
-    setConfirming(false);
-  };
+  }, [disabled]);
 
   useEffect(() => () => clearHold(false), []);
 
   return (
     <View style={styles.wrap}>
       <Pressable
-        accessibilityHint="Hold continuously to delete this in-progress recording"
-        accessibilityLabel="Hold to cancel recording"
+        accessibilityHint="Hold for 1.5 seconds to cancel and delete the current Drop"
+        accessibilityLabel="Hold to Cancel"
         accessibilityRole="button"
         accessibilityState={{ disabled }}
         disabled={disabled}
         onPressIn={beginHold}
         onPressOut={releaseHold}
-        style={[styles.holdButton, disabled && styles.disabled]}
+        onResponderTerminate={releaseHold}
+        style={[styles.holdButton, holding && styles.holdingButton, disabled && styles.disabled]}
         testID="hold-to-cancel">
         <Text style={styles.holdLabel}>{holding ? 'Keep holding to cancel' : 'Hold to Cancel'}</Text>
         <View style={styles.track}>
-          <View style={[styles.progress, { width: `${Math.round(progress * 100)}%` }]} testID="hold-to-cancel-progress" />
+          <View
+            style={[styles.progress, reducedMotion && styles.progressReducedMotion, { width: `${Math.round(progress * 100)}%` }]}
+            testID="hold-to-cancel-progress"
+          />
         </View>
       </Pressable>
-      <Pressable
-        accessibilityHint="Deletes this in-progress recording without a hold gesture"
-        accessibilityLabel="Confirm cancel recording"
-        accessibilityRole="button"
-        accessibilityState={{ disabled }}
-        disabled={disabled}
-        onPress={openConfirmation}
-        style={[styles.confirmButton, disabled && styles.disabled]}
-        testID="confirm-cancel-recording">
-        <Text style={styles.confirmLabel}>Confirm Cancel</Text>
-      </Pressable>
-      {confirming && (
-        <View
-          accessibilityLabel="Cancel recording confirmation"
-          style={styles.confirmation}
-          testID="cancel-recording-confirmation">
-          <Text accessibilityRole="header" maxFontSizeMultiplier={1.5} style={styles.confirmationTitle}>
-            Cancel this recording?
-          </Text>
-          <Text maxFontSizeMultiplier={1.5} style={styles.confirmationBody}>
-            The local recording will be deleted from this device.
-          </Text>
-          <Pressable
-            accessibilityHint="Returns to the paused recording without deleting it"
-            accessibilityLabel="Keep Recording"
-            accessibilityRole="button"
-            accessibilityState={{ disabled }}
-            disabled={disabled}
-            onPress={keepRecording}
-            style={[styles.keepButton, disabled && styles.disabled]}
-            testID="keep-recording">
-            <Text maxFontSizeMultiplier={1.5} style={styles.keepLabel}>Keep Recording</Text>
-          </Pressable>
-          <Pressable
-            accessibilityHint="Deletes this local recording and returns to duration selection"
-            accessibilityLabel="Delete Recording"
-            accessibilityRole="button"
-            accessibilityState={{ disabled }}
-            disabled={disabled}
-            onPress={finishCancel}
-            style={[styles.deleteButton, disabled && styles.disabled]}
-            testID="delete-recording-confirmed">
-            <Text maxFontSizeMultiplier={1.5} style={styles.deleteLabel}>Delete Recording</Text>
-          </Pressable>
-        </View>
-      )}
     </View>
   );
 }
@@ -175,6 +127,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
   },
+  holdingButton: { backgroundColor: colors.dangerSoft },
   holdLabel: { color: colors.danger, fontSize: 15, fontWeight: '800', textAlign: 'center' },
   track: {
     backgroundColor: colors.dangerSoft,
@@ -184,41 +137,6 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   progress: { backgroundColor: colors.danger, height: '100%' },
-  confirmButton: { alignItems: 'center', justifyContent: 'center', minHeight: minimumTouchTarget },
-  confirmLabel: { color: colors.danger, textAlign: 'center', ...typography.eyebrow },
-  confirmation: {
-    backgroundColor: colors.surface,
-    borderColor: colors.dangerSoft,
-    borderRadius: radii.lg,
-    borderWidth: 1,
-    gap: spacing.md,
-    padding: spacing.lg,
-    width: '100%',
-  },
-  confirmationTitle: { color: colors.inkStrong, textAlign: 'center', ...typography.title },
-  confirmationBody: { color: colors.muted, fontSize: 15, lineHeight: 22, textAlign: 'center' },
-  keepButton: {
-    alignItems: 'center',
-    borderColor: colors.border,
-    borderRadius: radii.md,
-    borderWidth: 1,
-    justifyContent: 'center',
-    minHeight: minimumTouchTarget,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-  },
-  keepLabel: { color: colors.ink, textAlign: 'center', ...typography.label },
-  deleteButton: {
-    alignItems: 'center',
-    backgroundColor: colors.danger,
-    borderColor: colors.danger,
-    borderRadius: radii.md,
-    borderWidth: 1,
-    justifyContent: 'center',
-    minHeight: minimumTouchTarget,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-  },
-  deleteLabel: { color: colors.white, textAlign: 'center', ...typography.label },
+  progressReducedMotion: { opacity: 0 },
   disabled: { opacity: 0.5 },
 });

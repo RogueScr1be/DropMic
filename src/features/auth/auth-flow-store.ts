@@ -5,7 +5,6 @@ export type AuthFlowStep =
   | 'explanation'
   | 'email'
   | 'otp'
-  | 'onboarding'
   | 'complete'
   | 'sign_in_email'
   | 'sign_in_otp';

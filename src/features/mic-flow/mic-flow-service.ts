@@ -54,6 +54,19 @@ export type MicFlowRecordingIdentity = Readonly<{
   accessToken: string;
 }>;
 
+export const MIC_FLOW_OWNER_FAILURE_REASONS = [
+  'timeout',
+  'network',
+  'auth',
+  'invalid_session',
+  'unknown',
+] as const;
+export type MicFlowOwnerFailureReason = (typeof MIC_FLOW_OWNER_FAILURE_REASONS)[number];
+
+export type MicFlowOwnerPreparationResult =
+  | { status: 'ready'; identity: MicFlowRecordingIdentity }
+  | { status: 'unavailable'; reason: MicFlowOwnerFailureReason };
+
 export type MicFlowCompletion = {
   completionId: string;
   mode: MicFlowMode;
@@ -73,7 +86,9 @@ export type MicFlowCompletionResult =
       reason: 'not_configured' | 'unowned' | 'stale_identity' | 'request_failed' | 'malformed_response';
     };
 
-const SESSION_TIMEOUT_MS = 750;
+const SESSION_TIMEOUT_MS = 5000;
+
+let ownerPreparationInFlight: Promise<MicFlowOwnerPreparationResult> | null = null;
 
 function sessionIdentity(session: Awaited<ReturnType<typeof getSession>>): MicFlowRecordingIdentity | null {
   const userId = session?.user?.id;
@@ -100,6 +115,102 @@ async function bounded<T>(promise: Promise<T>, timeoutMs = SESSION_TIMEOUT_MS): 
       clearTimeout(timer);
     }
   }
+}
+
+type TimedOwnerPreparationResult =
+  | { status: 'resolved'; value: MicFlowOwnerPreparationResult }
+  | { status: 'rejected'; error: unknown }
+  | { status: 'timeout' };
+
+async function waitForOwnerPreparation(
+  operation: Promise<MicFlowOwnerPreparationResult>,
+  timeoutMs = SESSION_TIMEOUT_MS,
+): Promise<TimedOwnerPreparationResult> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation.then(
+        (value) => ({ status: 'resolved' as const, value }),
+        (error: unknown) => ({ status: 'rejected' as const, error }),
+      ),
+      new Promise<{ status: 'timeout' }>((resolve) => {
+        timer = setTimeout(() => resolve({ status: 'timeout' }), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}
+
+function classifyOwnerFailure(error: unknown): MicFlowOwnerFailureReason {
+  if (!error || typeof error !== 'object') {
+    return 'unknown';
+  }
+  const detail = error as { code?: unknown; message?: unknown; status?: unknown; name?: unknown };
+  const code = typeof detail.code === 'string' ? detail.code.toLowerCase() : '';
+  const message = typeof detail.message === 'string' ? detail.message.toLowerCase() : '';
+  const name = typeof detail.name === 'string' ? detail.name.toLowerCase() : '';
+  const status = typeof detail.status === 'number' ? detail.status : null;
+
+  if ((status !== null && status >= 500) || /network|fetch|offline|connection|timeout|timed out/.test(`${code} ${message} ${name}`)) {
+    return 'network';
+  }
+  if (status === 401 || status === 403 || /auth|jwt|token|credential|sign.?in|session/.test(`${code} ${message} ${name}`)) {
+    return 'auth';
+  }
+  return 'unknown';
+}
+
+function reportOwnerFailure(reason: MicFlowOwnerFailureReason): void {
+  if (typeof __DEV__ !== 'undefined' && __DEV__) {
+    console.warn(`[MicFlow] local recording owner unavailable: ${reason}`);
+  }
+}
+
+async function runOwnerPreparation(client: NonNullable<typeof supabase>): Promise<MicFlowOwnerPreparationResult> {
+  try {
+    const current = await client.auth.getSession();
+    if (current.error) {
+      return { status: 'unavailable', reason: classifyOwnerFailure(current.error) };
+    }
+    if (current.data.session) {
+      const identity = sessionIdentity(current.data.session);
+      return identity ? { status: 'ready', identity } : { status: 'unavailable', reason: 'invalid_session' };
+    }
+
+    const anonymous = await client.auth.signInAnonymously();
+    if (anonymous.error) {
+      return { status: 'unavailable', reason: classifyOwnerFailure(anonymous.error) };
+    }
+    const identity = sessionIdentity(anonymous.data.session);
+    return identity ? { status: 'ready', identity } : { status: 'unavailable', reason: 'invalid_session' };
+  } catch (error) {
+    return { status: 'unavailable', reason: classifyOwnerFailure(error) };
+  }
+}
+
+function getOwnerPreparationOperation(client: NonNullable<typeof supabase>): Promise<MicFlowOwnerPreparationResult> {
+  if (ownerPreparationInFlight) {
+    return ownerPreparationInFlight;
+  }
+
+  const operation = runOwnerPreparation(client);
+  ownerPreparationInFlight = operation;
+  void operation.then(
+    () => {
+      if (ownerPreparationInFlight === operation) {
+        ownerPreparationInFlight = null;
+      }
+    },
+    () => {
+      if (ownerPreparationInFlight === operation) {
+        ownerPreparationInFlight = null;
+      }
+    },
+  );
+  return operation;
 }
 
 export function createMicFlowSnapshotCoordinator(
@@ -155,30 +266,39 @@ export function createMicFlowSnapshotCoordinator(
   return { invalidate, refresh, transition };
 }
 
+export async function prepareAnonymousMicFlowSession(options?: {
+  timeoutMs?: number;
+  isCurrent?: () => boolean;
+}): Promise<MicFlowOwnerPreparationResult | null> {
+  if (!isSupabaseConfigured || !supabase) {
+    const result = { status: 'unavailable' as const, reason: 'auth' as const };
+    reportOwnerFailure(result.reason);
+    return result;
+  }
+  const timed = await waitForOwnerPreparation(getOwnerPreparationOperation(supabase), options?.timeoutMs);
+  if (timed.status === 'timeout') {
+    reportOwnerFailure('timeout');
+    return { status: 'unavailable', reason: 'timeout' };
+  }
+  if (timed.status === 'rejected') {
+    reportOwnerFailure(classifyOwnerFailure(timed.error));
+    return { status: 'unavailable', reason: classifyOwnerFailure(timed.error) };
+  }
+  if (options?.isCurrent && !options.isCurrent()) {
+    return null;
+  }
+  if (timed.value.status === 'unavailable') {
+    reportOwnerFailure(timed.value.reason);
+  }
+  return timed.value;
+}
+
 export async function establishAnonymousMicFlowSession(options?: {
   timeoutMs?: number;
   isCurrent?: () => boolean;
 }): Promise<MicFlowRecordingIdentity | null> {
-  if (!isSupabaseConfigured || !supabase) {
-    return null;
-  }
-  const client = supabase;
-
-  const current = await bounded(Promise.resolve().then(() => client.auth.getSession()), options?.timeoutMs);
-  if (!current || current.error) {
-    return null;
-  }
-  if (current.data.session) {
-    const identity = sessionIdentity(current.data.session);
-    return !options?.isCurrent || options.isCurrent() ? identity : null;
-  }
-
-  const anonymous = await bounded(Promise.resolve().then(() => client.auth.signInAnonymously()), options?.timeoutMs);
-  if (!anonymous || anonymous.error) {
-    return null;
-  }
-  const identity = sessionIdentity(anonymous.data.session);
-  return !options?.isCurrent || options.isCurrent() ? identity : null;
+  const result = await prepareAnonymousMicFlowSession(options);
+  return result?.status === 'ready' ? result.identity : null;
 }
 
 export async function getMicFlowOwnerId(options?: { timeoutMs?: number }): Promise<string | null> {

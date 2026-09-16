@@ -3,11 +3,14 @@ import { AppState, Animated, Modal, Pressable, StyleSheet, Text, View } from 're
 import { useLocalSearchParams } from 'expo-router';
 
 import { SignupFlow } from '@/features/auth/SignupFlow';
+import { useAuthFlowStore } from '@/features/auth/auth-flow-store';
 import { clearUnclaimedAttempt, getUnclaimedAttempt, saveAndVerifyUnclaimedAttempt, type UnclaimedAttempt } from '@/features/auth/auth-recovery';
 import { claimUnclaimedAttempt, getSession } from '@/features/auth/auth-service';
 import { isSupabaseConfigured, supabase } from '@/features/auth/auth-client';
+import { useCompletionBell } from '@/features/completion/completion-sound';
+import { CompletionMark } from '@/features/completion/CompletionMark';
 import {
-  establishAnonymousMicFlowSession,
+  prepareAnonymousMicFlowSession,
   createMicFlowSnapshotCoordinator,
   getMicFlowOwnerId,
   recordMicFlowCompletion,
@@ -33,7 +36,16 @@ import { hasAcceptedAgeGate, saveAgeGateAcceptance } from '@/features/first-use/
 import { SplashReveal } from '@/features/first-use/SplashReveal';
 import { useReducedMotion } from '@/features/first-use/use-reduced-motion';
 import { QuickReadFlow } from '@/features/quick-read/QuickReadFlow';
-import { createTakeIdentity, type TakeIdentity } from '@/features/quick-read/attempt-identity';
+import { SettingsSheet } from '@/features/settings/SettingsSheet';
+import {
+  consumeTakeIdentity,
+  createConsumedTakeIdentity,
+  createPendingTakeIdentity,
+  createTakeIdentity,
+  prepareIdentityForRecording,
+  type TakeIdentity,
+  type TakeIdentityLifecycle,
+} from '@/features/quick-read/attempt-identity';
 import { createTakeTwoTake } from '@/features/quick-read/take-two-journey';
 import { useLocalAudioRecorder } from '@/features/recording/use-local-audio-recorder';
 import { HoldToCancel } from '@/features/recording/HoldToCancel';
@@ -92,7 +104,9 @@ export default function AudioProofScreen() {
   const [recoveryAttempt, setRecoveryAttempt] = useState<UnclaimedAttempt | null>(null);
   const [serverAttemptId, setServerAttemptId] = useState<string | null>(null);
   const [isAuthFlowVisible, setIsAuthFlowVisible] = useState(auth === 'complete');
+  const [authFlowMode, setAuthFlowMode] = useState<'conversion' | 'sign-in'>('conversion');
   const [isQuickReadVisible, setIsQuickReadVisible] = useState(false);
+  const [isSettingsVisible, setIsSettingsVisible] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
   const [takeIdentity, setTakeIdentity] = useState<TakeIdentity>(() => createTakeIdentity());
   const [takeTwoBaselineRunId, setTakeTwoBaselineRunId] = useState<string | null>(null);
@@ -104,13 +118,14 @@ export default function AudioProofScreen() {
   const [completedTakeHidden, setCompletedTakeHidden] = useState(false);
   const [retainedTakeStartPromptVisible, setRetainedTakeStartPromptVisible] = useState(false);
   const [retainedTakeHydrating, setRetainedTakeHydrating] = useState(true);
+  const playCompletionBell = useCompletionBell();
   const stopInFlight = useRef(false);
   const completionInFlight = useRef(false);
   const cleanupInFlight = useRef(false);
   const startInFlight = useRef(false);
   const operationGeneration = useRef(0);
   const countdownTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const takeIdentityRef = useRef(takeIdentity);
+  const takeIdentityLifecycleRef = useRef<TakeIdentityLifecycle>(createPendingTakeIdentity(takeIdentity));
   const takeTwoStartInFlight = useRef(false);
   const micFlowCompletionRef = useRef<string | null>(null);
   const micFlowIdentityRef = useRef<MicFlowRecordingIdentity | null>(null);
@@ -129,6 +144,7 @@ export default function AudioProofScreen() {
   const remainingMs = Math.max(0, selectedDurationSeconds * 1000 - elapsed);
   const statePhase = phaseForRecordingState(recordingState);
   const hasHiddenCompletedTake = recordingState === 'completed' && completedTakeHidden && Boolean(recordingUri);
+  const hasRetainedTakeAvailable = hasHiddenCompletedTake || Boolean(retainedCompletedTake);
   const recoveryPresentation = recoveryPresentationForState({
     hasAuthRecovery: Boolean(recoveryAttempt),
     hasHiddenCompletedTake,
@@ -144,6 +160,8 @@ export default function AudioProofScreen() {
       : recordingState === 'error'
         ? 'error'
         : firstUsePhase);
+  const overlayVisible = isAuthFlowVisible || isQuickReadVisible || isSettingsVisible || micFlowSavePromptVisible;
+  const showSideFlow = false;
 
   const currentAttempt = useMemo<UnclaimedAttempt | null>(() => {
     if (recordingState !== 'completed' || completedAtMs === null) {
@@ -201,6 +219,8 @@ export default function AudioProofScreen() {
     setMicFlowSnapshot(snapshot);
     setMicFlowSnapshotLoading(false);
   }, []);
+
+  const ignoreSolariComplete = useCallback(() => undefined, []);
 
   const handleMicFlowAuthTransition = useCallback((session: Awaited<ReturnType<typeof getSession>>) => {
     const nextOwnerId = session?.user?.id ?? null;
@@ -301,7 +321,7 @@ export default function AudioProofScreen() {
       const result = await recordMicFlowCompletion({ ...pending.input, useSave }, pending.identity);
       if (
         pending.generation !== micFlowIdentityGenerationRef.current ||
-        takeIdentityRef.current.clientAttemptId !== pending.input.completionId ||
+        takeIdentityLifecycleRef.current.identity.clientAttemptId !== pending.input.completionId ||
         micFlowIdentityRef.current?.userId !== pending.identity.userId
       ) {
         return;
@@ -356,7 +376,7 @@ export default function AudioProofScreen() {
   const persistFinalizedAttempt = useCallback(async (completedAtMsForAttempt: number, activeElapsedMs: number) => {
     const attempt: UnclaimedAttempt = {
       audioRetained: false,
-      clientAttemptId: takeIdentityRef.current.clientAttemptId,
+      clientAttemptId: takeIdentityLifecycleRef.current.identity.clientAttemptId,
       completedAt: new Date(completedAtMsForAttempt).toISOString(),
       completedDurationSeconds: Math.round(activeElapsedMs / 1000),
       selectedDurationSeconds,
@@ -379,13 +399,13 @@ export default function AudioProofScreen() {
     }
     const retainedTake: LocalCompletedTake = {
       version: LOCAL_COMPLETED_TAKE_VERSION,
-      clientAttemptId: takeIdentityRef.current.clientAttemptId,
+      clientAttemptId: takeIdentityLifecycleRef.current.identity.clientAttemptId,
       completedAt: new Date(completedAtMsForAttempt).toISOString(),
       completedDurationSeconds: Math.round(activeElapsedMs / 1000),
       localUri: uri,
       ownerId,
       prompt: topic.prompt,
-      quickReadIdempotencyKey: takeIdentityRef.current.quickReadIdempotencyKey,
+      quickReadIdempotencyKey: takeIdentityLifecycleRef.current.identity.quickReadIdempotencyKey,
       selectedDurationSeconds,
       topicId: topic.id,
     };
@@ -400,7 +420,7 @@ export default function AudioProofScreen() {
     pendingMicFlowCompletionRef.current = null;
     micFlowCompletionRef.current = null;
     recordingOwnerIdRef.current = null;
-    takeIdentityRef.current = nextTakeIdentity;
+    takeIdentityLifecycleRef.current = createPendingTakeIdentity(nextTakeIdentity);
     setTakeIdentity(nextTakeIdentity);
     setServerAttemptId(null);
     setTakeTwoBaselineRunId(comparisonBaselineRunId);
@@ -416,7 +436,7 @@ export default function AudioProofScreen() {
       clientAttemptId: take.clientAttemptId,
       quickReadIdempotencyKey: take.quickReadIdempotencyKey,
     };
-    takeIdentityRef.current = restoredIdentity;
+    takeIdentityLifecycleRef.current = createConsumedTakeIdentity(restoredIdentity);
     setTakeIdentity(restoredIdentity);
     setServerAttemptId(null);
     setTakeTwoBaselineRunId(null);
@@ -511,6 +531,7 @@ export default function AudioProofScreen() {
         audio.retainFinalizedRecording(uri);
         setCompletedTakeHidden(false);
         dispatch({ type: 'PERSISTENCE_CONFIRMED', completedAtMs: completedAtMsForAttempt });
+        playCompletionBell(savedAttempt.clientAttemptId);
         exposeVerifiedCompletion(savedAttempt);
       } else {
         dispatch({ type: 'FAILURE', message: 'The recording did not produce a local file.' });
@@ -525,7 +546,7 @@ export default function AudioProofScreen() {
     } finally {
       completionInFlight.current = false;
     }
-  }, [audio, dispatch, exposeVerifiedCompletion, persistFinalizedAttempt, persistLocalCompletedTake]);
+  }, [audio, dispatch, exposeVerifiedCompletion, persistFinalizedAttempt, persistLocalCompletedTake, playCompletionBell]);
 
   const cancelActiveRecording = useCallback(async () => {
     const currentState = useRecordingStore.getState();
@@ -572,6 +593,9 @@ export default function AudioProofScreen() {
   const closeCompletedTake = useCallback(async () => {
     try {
       await audio.stopPlayback();
+      if (useRecordingStore.getState().state === 'completed') {
+        dispatch({ type: 'DELETE_RECORDING' });
+      }
       setCompletedTakeHidden(true);
       setPhase('topic_reveal');
       setActionError(null);
@@ -582,7 +606,7 @@ export default function AudioProofScreen() {
           : 'Unable to stop saved take playback. Your saved take is still available.',
       );
     }
-  }, [audio]);
+  }, [audio, dispatch]);
 
   const retrySaveFinalizedAttempt = useCallback(async () => {
     const state = useRecordingStore.getState();
@@ -602,6 +626,7 @@ export default function AudioProofScreen() {
       audio.retainFinalizedRecording(state.recordingUri);
       setCompletedTakeHidden(false);
       dispatch({ type: 'PERSISTENCE_CONFIRMED', completedAtMs: completedAtMsForAttempt });
+      playCompletionBell(savedAttempt.clientAttemptId);
       exposeVerifiedCompletion(savedAttempt);
       setActionError(null);
     } catch (saveError) {
@@ -612,7 +637,7 @@ export default function AudioProofScreen() {
     } finally {
       completionInFlight.current = false;
     }
-  }, [audio, dispatch, exposeVerifiedCompletion, persistFinalizedAttempt, persistLocalCompletedTake]);
+  }, [audio, dispatch, exposeVerifiedCompletion, persistFinalizedAttempt, persistLocalCompletedTake, playCompletionBell]);
 
   const retryCleanupRecording = useCallback(async () => {
     const state = useRecordingStore.getState();
@@ -748,7 +773,7 @@ export default function AudioProofScreen() {
     }
   }, []);
 
-  const beginRecording = useCallback(async (options?: { replaceRetainedTake?: boolean }) => {
+  const beginRecording = useCallback(async (options?: { keepRetainedTake?: boolean; replaceRetainedTake?: boolean }) => {
     if (startInFlight.current || recordingState === 'recording' || displayedPhase !== 'duration_selection') {
       return;
     }
@@ -756,7 +781,7 @@ export default function AudioProofScreen() {
     const hasRetainedTake = Boolean(retainedCompletedTake || (recordingState === 'completed' && recordingUri));
     const startDecision = recordingStartDecision({
       hasRetainedTake,
-      replaceRetainedTake: Boolean(options?.replaceRetainedTake),
+      replaceRetainedTake: Boolean(options?.replaceRetainedTake || options?.keepRetainedTake),
       retainedTakeHydrating,
     });
     if (startDecision === 'wait-for-retained-take-hydration') {
@@ -768,6 +793,11 @@ export default function AudioProofScreen() {
       return;
     }
 
+    const preparedIdentity = prepareIdentityForRecording(takeIdentityLifecycleRef.current);
+    if (preparedIdentity.rotated) {
+      beginNewTake(takeTwoBaselineRunId, preparedIdentity.lifecycle.identity);
+    }
+
     const operationId = ++operationGeneration.current;
     startInFlight.current = true;
     setIsStarting(true);
@@ -775,7 +805,9 @@ export default function AudioProofScreen() {
     if (hasRetainedTake && options?.replaceRetainedTake) {
       try {
         await deleteRetainedCompletedTake(recordingUri);
-        dispatch({ type: 'DELETE_RECORDING' });
+        if (recordingState === 'completed') {
+          dispatch({ type: 'DELETE_RECORDING' });
+        }
       } catch (deleteError) {
         setActionError(deleteError instanceof Error ? deleteError.message : 'Unable to delete saved take.');
         setIsStarting(false);
@@ -783,19 +815,46 @@ export default function AudioProofScreen() {
         return;
       }
     }
+    if (hasRetainedTake && options?.keepRetainedTake) {
+      void audio.stopPlayback().catch(() => undefined);
+      if (recordingState === 'completed') {
+        dispatch({ type: 'DELETE_RECORDING' });
+      }
+      setCompletedTakeHidden(false);
+    }
     ++micFlowIdentityGenerationRef.current;
     micFlowIdentityRef.current = null;
     pendingMicFlowCompletionRef.current = null;
-    const identity = await establishAnonymousMicFlowSession({
+    const ownerPreparation = await prepareAnonymousMicFlowSession({
       isCurrent: () => operationId === operationGeneration.current,
     });
-    if (operationId === operationGeneration.current && identity) {
-      recordingOwnerIdRef.current = identity.userId;
-      const currentOwnerId = await getMicFlowOwnerId();
-      if (operationId === operationGeneration.current && currentOwnerId === identity.userId) {
-        micFlowIdentityRef.current = identity;
-      }
+    if (operationId !== operationGeneration.current) {
+      setIsStarting(false);
+      startInFlight.current = false;
+      return;
     }
+    if (!ownerPreparation || ownerPreparation.status !== 'ready') {
+      setActionError('Could not prepare your local recording owner. Check your connection and try again.');
+      setIsStarting(false);
+      startInFlight.current = false;
+      return;
+    }
+    const identity = ownerPreparation.identity;
+    recordingOwnerIdRef.current = identity.userId;
+    const currentOwnerId = await getMicFlowOwnerId();
+    if (operationId !== operationGeneration.current) {
+      setIsStarting(false);
+      startInFlight.current = false;
+      return;
+    }
+    if (currentOwnerId !== identity.userId) {
+      recordingOwnerIdRef.current = null;
+      setActionError('Could not verify your local recording owner. Check your connection and try again.');
+      setIsStarting(false);
+      startInFlight.current = false;
+      return;
+    }
+    micFlowIdentityRef.current = identity;
     dispatch({ type: 'REQUEST_PERMISSION' });
 
     try {
@@ -810,6 +869,7 @@ export default function AudioProofScreen() {
         return;
       }
 
+      takeIdentityLifecycleRef.current = consumeTakeIdentity(takeIdentityLifecycleRef.current);
       dispatch({ type: 'BEGIN_COUNTDOWN' });
       const countdownStart = Date.now();
       setCountdownStartedAtMs(countdownStart);
@@ -863,6 +923,7 @@ export default function AudioProofScreen() {
     }
   }, [
     audio,
+    beginNewTake,
     clearCountdown,
     deleteRetainedCompletedTake,
     dispatch,
@@ -871,28 +932,33 @@ export default function AudioProofScreen() {
     recordingUri,
     retainedCompletedTake,
     retainedTakeHydrating,
+    takeTwoBaselineRunId,
   ]);
 
   const keepSavedTake = useCallback(() => {
-    void audio.stopPlayback().catch(() => undefined);
     setRetainedTakeStartPromptVisible(false);
-    setPhase('topic_reveal');
-  }, [audio]);
+    void beginRecording({ keepRetainedTake: true });
+  }, [beginRecording]);
 
   const deleteTakeAndStart = useCallback(() => {
     void beginRecording({ replaceRetainedTake: true });
   }, [beginRecording]);
 
   const chooseNewTopic = useCallback(() => {
-    micFlowIdentityGenerationRef.current += 1;
-    micFlowIdentityRef.current = null;
-    pendingMicFlowCompletionRef.current = null;
-    micFlowCompletionRef.current = null;
-    setTopic((currentTopic) => selectNextTopic(currentTopic.id, Date.now() + revealKey + 1));
-    setRevealKey((currentKey) => currentKey + 1);
-    setTakeTwoBaselineRunId(null);
-    setActionError(null);
-    setPhase('topic_reveal');
+    try {
+      micFlowIdentityGenerationRef.current += 1;
+      micFlowIdentityRef.current = null;
+      pendingMicFlowCompletionRef.current = null;
+      micFlowCompletionRef.current = null;
+      setTopic((currentTopic) => selectNextTopic(currentTopic.id, Date.now() + revealKey + 1));
+      setRevealKey((currentKey) => currentKey + 1);
+      setTakeTwoBaselineRunId(null);
+      setActionError(null);
+      setPhase('topic_reveal');
+    } catch {
+      setActionError(null);
+      setPhase('topic_reveal');
+    }
   }, [revealKey]);
 
   const beginTakeTwo = useCallback((baselineRunId: string) => {
@@ -954,32 +1020,56 @@ export default function AudioProofScreen() {
   }, [beginNewTake, chooseNewTopic, deleteRetainedCompletedTake, dispatch, recordingUri]);
 
   const openQuickRead = useCallback(async () => {
+    if (micFlowSavePromptVisible) {
+      setActionError('Choose whether to use a Mic Save before starting Quick Read.');
+      return;
+    }
     try {
-      const requestedTakeId = takeIdentityRef.current.clientAttemptId;
+      const requestedTakeId = takeIdentityLifecycleRef.current.identity.clientAttemptId;
       const session = await getSession();
-      if (takeIdentityRef.current.clientAttemptId !== requestedTakeId) {
+      if (takeIdentityLifecycleRef.current.identity.clientAttemptId !== requestedTakeId) {
         return;
       }
       if (!session?.user || session.user.is_anonymous) {
+        setAuthFlowMode('conversion');
+        setIsSettingsVisible(false);
         setIsAuthFlowVisible(true);
         return;
       }
       const attemptId = serverAttemptId ?? (await claimUnclaimedAttempt(currentAttempt));
-      if (takeIdentityRef.current.clientAttemptId !== requestedTakeId) {
+      if (takeIdentityLifecycleRef.current.identity.clientAttemptId !== requestedTakeId) {
         return;
       }
       if (typeof attemptId !== 'string') {
         setActionError('Finish account setup before starting a Quick Read.');
+        setAuthFlowMode('conversion');
+        setIsSettingsVisible(false);
         setIsAuthFlowVisible(true);
         return;
       }
+      setIsAuthFlowVisible(false);
+      setIsSettingsVisible(false);
       setServerAttemptId(attemptId);
       setIsQuickReadVisible(true);
     } catch (openError) {
       setActionError(openError instanceof Error ? openError.message : 'Sign in before starting a Quick Read.');
+      setAuthFlowMode('conversion');
+      setIsSettingsVisible(false);
       setIsAuthFlowVisible(true);
     }
-  }, [currentAttempt, serverAttemptId]);
+  }, [currentAttempt, micFlowSavePromptVisible, serverAttemptId]);
+
+  const retainedTakeCard = recoveryPresentation === 'retained-take' ? (
+    <RetainedTakeCard
+      onResume={() => {
+        if (hasHiddenCompletedTake) {
+          setCompletedTakeHidden(false);
+        } else if (retainedCompletedTake) {
+          showRetainedCompletedTake(retainedCompletedTake);
+        }
+      }}
+    />
+  ) : null;
 
   if (displayedPhase === 'splash') {
     return <SplashReveal reducedMotion={reducedMotion} />;
@@ -988,11 +1078,17 @@ export default function AudioProofScreen() {
   return (
     <>
       <AppShell
-        header={
+        header={displayedPhase === 'completion' ? null : (
           <AppHeader
             onBack={displayedPhase === 'duration_selection' ? () => setPhase('topic_reveal') : undefined}
+            onSettings={() => {
+              setIsAuthFlowVisible(false);
+              setIsQuickReadVisible(false);
+              setIsSettingsVisible(true);
+            }}
+            settingsHidden={overlayVisible}
           />
-        }>
+        )}>
         {(layout) => (
           <>
           {displayedPhase === 'age_gate' && (
@@ -1006,26 +1102,14 @@ export default function AudioProofScreen() {
           )}
 
           {displayedPhase !== 'age_gate' && (
-            <View style={[styles.experienceGrid, layout.useTwoColumns && displayedPhase !== 'topic_reveal' && styles.experienceGridWide]}>
+            <View style={[styles.experienceGrid, showSideFlow && layout.useTwoColumns && displayedPhase !== 'topic_reveal' && styles.experienceGridWide]}>
               <View style={styles.primaryColumn} testID="primary-region">
-                {recoveryPresentation && displayedPhase !== 'completion' && (
+                {recoveryPresentation === 'auth-recovery' && displayedPhase !== 'completion' && (
                   <View style={styles.recoveryBanner}>
-                    <Text style={styles.recoveryBannerText}>
-                      {recoveryPresentation === 'retained-take'
-                        ? 'You have a completed local take saved on this device.'
-                        : 'You have a completed local take ready to claim.'}
-                    </Text>
+                    <Text style={styles.recoveryBannerText}>You have a completed local take ready to claim.</Text>
                     <ActionButton
-                      label={recoveryPresentation === 'retained-take' ? 'Resume saved take' : 'Resume Quick Read setup'}
-                      onPress={() => {
-                        if (recoveryPresentation === 'retained-take' && hasHiddenCompletedTake) {
-                          setCompletedTakeHidden(false);
-                        } else if (recoveryPresentation === 'retained-take' && retainedCompletedTake) {
-                          showRetainedCompletedTake(retainedCompletedTake);
-                        } else {
-                          setIsAuthFlowVisible(true);
-                        }
-                      }}
+                      label="Resume Quick Read setup"
+                      onPress={() => setIsAuthFlowVisible(true)}
                       secondary
                     />
                   </View>
@@ -1034,15 +1118,16 @@ export default function AudioProofScreen() {
                 {displayedPhase === 'topic_reveal' && (
                   <TopicReveal
                     density={layout.solariDensity}
-                    onComplete={() => undefined}
+                    onComplete={ignoreSolariComplete}
                     onContinue={() => setPhase('duration_selection')}
                     onNewDrop={chooseNewTopic}
                     prompt={topic.prompt}
                     reducedMotion={reducedMotion}
                     revealKey={revealKey}
                     flowCard={(
-                      <View style={styles.flowColumnStacked} testID="flow-region">
+                      <View style={styles.flowStack} testID="flow-region">
                         <MicFlowCard loading={micFlowSnapshotLoading} snapshot={micFlowSnapshot} />
+                        {retainedTakeCard}
                       </View>
                     )}
                   />
@@ -1058,7 +1143,7 @@ export default function AudioProofScreen() {
                     onDeleteTakeAndStart={deleteTakeAndStart}
                     onKeepSavedTake={keepSavedTake}
                     prompt={topic.prompt}
-                    retainedTakePromptVisible={retainedTakeStartPromptVisible}
+                    retainedTakePromptVisible={retainedTakeStartPromptVisible || hasRetainedTakeAvailable}
                     selectedDuration={selectedDurationSeconds}
                     setDuration={(duration) => {
                       if (!takeTwoBaselineRunId) {
@@ -1067,6 +1152,12 @@ export default function AudioProofScreen() {
                     }}
                     showPermissionRetry={recordingState === 'permission_denied' || Boolean(recordingError)}
                     stackedDurations={layout.stackControls}
+                    supportCard={(
+                      <View style={styles.flowStack} testID="flow-region">
+                        <MicFlowCard loading={micFlowSnapshotLoading} snapshot={micFlowSnapshot} />
+                        {retainedTakeCard}
+                      </View>
+                    )}
                   />
                 )}
 
@@ -1164,7 +1255,7 @@ export default function AudioProofScreen() {
                 )}
               </View>
 
-              {displayedPhase !== 'topic_reveal' && displayedPhase !== 'recording' && displayedPhase !== 'countdown' && displayedPhase !== 'completion' && (
+              {showSideFlow && displayedPhase !== 'topic_reveal' && displayedPhase !== 'recording' && displayedPhase !== 'countdown' && displayedPhase !== 'completion' && (
                 <View
                   style={[styles.flowColumn, !layout.useTwoColumns && styles.flowColumnStacked]}
                   testID="flow-region">
@@ -1178,6 +1269,7 @@ export default function AudioProofScreen() {
       </AppShell>
       <SignupFlow
         attempt={currentAttempt ?? recoveryAttempt}
+        mode={authFlowMode}
         onAttemptClaimed={setServerAttemptId}
         onClose={() => {
           setIsAuthFlowVisible(false);
@@ -1191,6 +1283,23 @@ export default function AudioProofScreen() {
           setActionError('Signed out. Your local recording remains on this device.');
         }}
         visible={isAuthFlowVisible}
+      />
+      <SettingsSheet
+        onClose={() => setIsSettingsVisible(false)}
+        onOpenSignIn={() => {
+          setAuthFlowMode('sign-in');
+          useAuthFlowStore.getState().setStep('sign_in_email');
+          setIsQuickReadVisible(false);
+          setIsAuthFlowVisible(true);
+        }}
+        onSignedOut={() => {
+          handleMicFlowAuthTransition(null);
+          setMicFlowSnapshotLoading(false);
+          setMicFlowSavePromptVisible(false);
+          setMicFlowStatus('unprotected');
+          setActionError('Signed out. Your local recording remains on this device.');
+        }}
+        visible={isSettingsVisible}
       />
       <QuickReadFlow
         key={takeIdentity.clientAttemptId}
@@ -1275,6 +1384,7 @@ function DurationSelection({
   setDuration,
   showPermissionRetry,
   stackedDurations,
+  supportCard,
 }: {
   actionError: string | null;
   isStarting: boolean;
@@ -1289,7 +1399,10 @@ function DurationSelection({
   setDuration: (duration: RecordingDuration) => void;
   showPermissionRetry: boolean;
   stackedDurations: boolean;
+  supportCard: ReactNode;
 }) {
+  const replacementChoiceRequired = retainedTakePromptVisible;
+
   return (
     <View style={styles.section} testID="duration-selection">
       <Text accessibilityRole="header" style={styles.sectionTitle}>Today’s Drop</Text>
@@ -1309,7 +1422,12 @@ function DurationSelection({
           testID="retained-take-start-prompt">
           <Text accessibilityRole="header" style={styles.retainedTakeTitle}>You have a saved take.</Text>
           <Text style={styles.retainedTakeBody}>Keep it for later, or delete it before starting a new Drop.</Text>
-          <ActionButton label="Keep Saved Take" onPress={onKeepSavedTake} secondary />
+          <ActionButton
+            accessibilityHint="Keeps the saved recording recoverable and starts this new Drop"
+            label="Keep Saved Take and Start"
+            onPress={onKeepSavedTake}
+            secondary
+          />
           <ActionButton
             accessibilityHint="Deletes the saved local recording before starting this new Drop"
             label="Delete Take and Start"
@@ -1317,12 +1435,37 @@ function DurationSelection({
           />
         </View>
       )}
-      <ActionButton
-        accessibilityHint="Starts microphone preparation and the countdown"
-        disabled={isStarting}
-        label={isStarting ? 'Preparing your Drop…' : 'Let’s Go!'}
-        onPress={onBegin}
-      />
+      {!replacementChoiceRequired && (
+        <ActionButton
+          accessibilityHint="Starts microphone preparation and the countdown"
+          disabled={isStarting}
+          label={isStarting ? 'Preparing your Drop…' : 'Let’s Go!'}
+          onPress={onBegin}
+        />
+      )}
+      {supportCard}
+    </View>
+  );
+}
+
+function RetainedTakeCard({ onResume }: { onResume: () => void }) {
+  return (
+    <View
+      accessibilityLabel="Saved take card"
+      style={styles.retainedFileStack}
+      testID="retained-take-card">
+      <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.retainedFileBack} />
+      <View style={styles.retainedFileFront}>
+        <View>
+          <Text style={styles.retainedFileKicker}>SAVED DROP</Text>
+        </View>
+        <ActionButton
+          accessibilityHint="Reopens the saved local recording"
+          label="Resume Saved Drop"
+          onPress={onResume}
+          secondary
+        />
+      </View>
     </View>
   );
 }
@@ -1471,6 +1614,8 @@ function CompletionView({
   recordingUri: string;
   reducedMotion: boolean;
 }) {
+  const [deleteConfirmationVisible, setDeleteConfirmationVisible] = useState(false);
+
   return (
     <>
       <View style={styles.section}>
@@ -1488,15 +1633,26 @@ function CompletionView({
         </View>
         <CompletionMark reducedMotion={reducedMotion} />
         <Text accessibilityRole="header" style={styles.heroTitle}>{headline}</Text>
+        <Text style={styles.completionBody}>Drop Saved</Text>
         <Text accessibilityElementsHidden style={styles.recordingMetadata} testID="recording-uri">{recordingUri}</Text>
         <PromptCard prompt={prompt} />
         <View style={styles.actionStack}>
-          <ActionButton label="Get a Quick Read" onPress={onQuickRead} />
-          <ActionButton label={isPlaybackPlaying ? 'Pause' : 'Play recording'} onPress={isPlaybackPlaying ? onPause : onPlay} secondary />
-          <View style={styles.secondaryRow}>
-            <ActionButton compact label="Retry recording" onPress={onRetry} secondary />
-            <ActionButton compact label="Delete recording" onPress={onDelete} secondary />
-          </View>
+          <ActionButton label="Quick Read" onPress={onQuickRead} />
+          <ActionButton label={isPlaybackPlaying ? 'Pause' : 'Play Drop'} onPress={isPlaybackPlaying ? onPause : onPlay} secondary />
+          {!deleteConfirmationVisible ? (
+            <View style={styles.secondaryRow}>
+              <ActionButton compact label="Retry Drop" onPress={onRetry} secondary />
+              <ActionButton compact label="Delete Drop" onPress={() => setDeleteConfirmationVisible(true)} secondary />
+            </View>
+          ) : (
+            <View accessibilityLabel="Delete Drop confirmation" style={styles.deleteConfirmation}>
+              <Text accessibilityRole="header" style={styles.deleteConfirmationTitle}>Delete this Drop?</Text>
+              <View style={styles.secondaryRow}>
+                <ActionButton compact label="Keep Drop" onPress={() => setDeleteConfirmationVisible(false)} secondary />
+                <ActionButton compact label="Delete Drop" onPress={onDelete} />
+              </View>
+            </View>
+          )}
         </View>
         {flowCard}
       </View>
@@ -1530,24 +1686,6 @@ function MicFlowSavePrompt({
         </View>
       </View>
     </Modal>
-  );
-}
-
-function CompletionMark({ reducedMotion }: { reducedMotion: boolean }) {
-  const [scale] = useState(() => new Animated.Value(0.65));
-
-  useEffect(() => {
-    if (reducedMotion) {
-      scale.setValue(1);
-      return;
-    }
-    Animated.spring(scale, { friction: 7, tension: 70, toValue: 1, useNativeDriver: true }).start();
-  }, [reducedMotion, scale]);
-
-  return (
-    <Animated.View style={[styles.completionMark, { transform: [{ scale }] }]}>
-      <Text style={styles.completionMarkText}>✓</Text>
-    </Animated.View>
   );
 }
 
@@ -1589,6 +1727,7 @@ const styles = StyleSheet.create({
   primaryColumn: { flex: 1, gap: spacing.xxl, minWidth: 0 },
   flowColumn: { flexShrink: 0, width: 340 },
   flowColumnStacked: { width: '100%' },
+  flowStack: { gap: spacing.md, width: '100%' },
   section: { gap: spacing.xl },
   centerSection: { alignItems: 'center', gap: spacing.xl, justifyContent: 'center', paddingVertical: spacing.xxxl },
   eyebrow: { color: colors.coral, ...typography.eyebrow },
@@ -1600,6 +1739,10 @@ const styles = StyleSheet.create({
   retainedTakePrompt: { backgroundColor: colors.surfaceMuted, borderRadius: radii.lg, gap: spacing.md, padding: spacing.lg },
   retainedTakeTitle: { color: colors.inkStrong, ...typography.title },
   retainedTakeBody: { color: colors.muted, fontSize: 15, lineHeight: 22 },
+  retainedFileStack: { paddingTop: spacing.sm, position: 'relative' },
+  retainedFileBack: { backgroundColor: colors.surfaceMuted, borderColor: colors.border, borderRadius: radii.md, borderWidth: 1, height: 74, left: spacing.md, position: 'absolute', right: spacing.md, top: 0, transform: [{ rotate: '-1.5deg' }] },
+  retainedFileFront: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radii.md, borderWidth: 1, gap: spacing.md, padding: spacing.lg },
+  retainedFileKicker: { color: colors.coral, ...typography.eyebrow },
   countdownNumber: { color: colors.coral, fontFamily: typography.displayFamily, fontSize: 138, fontWeight: '700', lineHeight: 150 },
   countdownNumberStatic: { opacity: 0.9 },
   centerPrompt: { color: colors.muted, fontFamily: typography.displayFamily, fontSize: 21, lineHeight: 29, maxWidth: 560, textAlign: 'center' },
@@ -1609,10 +1752,11 @@ const styles = StyleSheet.create({
   completionHeaderRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
   completionCloseButton: { alignItems: 'center', borderRadius: radii.pill, justifyContent: 'center', minHeight: 48, minWidth: 48 },
   completionCloseText: { color: colors.ink, fontSize: 34, fontWeight: '300', lineHeight: 38 },
-  completionMark: { alignItems: 'center', backgroundColor: colors.ink, borderRadius: radii.pill, height: 82, justifyContent: 'center', width: 82 },
-  completionMarkText: { color: colors.successSoft, fontSize: 48, fontWeight: '300' },
+  completionBody: { color: colors.muted, ...typography.body },
   completionMeta: { color: colors.muted, fontSize: 13 },
   actionStack: { gap: spacing.md },
+  deleteConfirmation: { backgroundColor: colors.dangerSoft, borderRadius: radii.md, gap: spacing.md, padding: spacing.lg },
+  deleteConfirmationTitle: { color: colors.inkStrong, ...typography.title },
   pausedControlColumn: { alignItems: 'stretch', maxWidth: 360, minWidth: 260, width: '100%' },
   secondaryRow: { flexDirection: 'row', gap: spacing.md },
   errorText: { color: colors.danger, fontSize: 15, lineHeight: 23, textAlign: 'center' },

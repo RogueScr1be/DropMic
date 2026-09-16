@@ -65,22 +65,44 @@ describe('recording state machine', () => {
     );
   });
 
-  it('cancels from pause only after a confirmed hold and cleanup success', () => {
+  it('cancels from pause at the completed hold threshold and preserves duration', () => {
     let context = transition(initialRecordingContext, { type: 'REQUEST_PERMISSION' }, 100);
     context = transition(context, { type: 'PERMISSION_GRANTED' }, 200);
+    context = transition(context, { type: 'SELECT_DURATION', duration: 90 }, 250);
     context = transition(context, { type: 'BEGIN_COUNTDOWN' }, 300);
     context = transition(context, { type: 'COUNTDOWN_COMPLETE' }, 400);
     context = transition(context, { type: 'STOP_REQUESTED' }, 1_400);
     context = transition(context, { type: 'CANCEL_HOLD_STARTED' }, 1_500);
-    context = transition(context, { type: 'CANCEL_HOLD_RELEASED' }, 1_600);
-    expect(context.state).toBe('paused');
-    expect(context.elapsedMs).toBe(1_000);
+    expect(context.state).toBe('cancelling');
+    expect(context.selectedDurationSeconds).toBe(90);
 
-    context = transition(context, { type: 'CANCEL_CONFIRMED' }, 1_700);
-    context = transition(context, { type: 'CLEANUP_SUCCEEDED' }, 1_800);
+    context = transition(context, { type: 'CANCEL_CONFIRMED' }, 3_000);
+    context = transition(context, { type: 'CLEANUP_SUCCEEDED' }, 3_100);
     expect(context.state).toBe('idle');
     expect(context.recordingUri).toBeNull();
     expect(context.elapsedMs).toBe(0);
+    expect(context.selectedDurationSeconds).toBe(90);
+  });
+
+  it('returns to paused on early hold release and permits a later hold', () => {
+    let context = transition(initialRecordingContext, { type: 'SELECT_DURATION', duration: 30 }, 100);
+    context = transition(context, { type: 'REQUEST_PERMISSION' }, 200);
+    context = transition(context, { type: 'PERMISSION_GRANTED' }, 300);
+    context = transition(context, { type: 'BEGIN_COUNTDOWN' }, 400);
+    context = transition(context, { type: 'COUNTDOWN_COMPLETE' }, 500);
+    context = transition(context, { type: 'STOP_REQUESTED' }, 1_500);
+    context = transition(context, { type: 'CANCEL_HOLD_STARTED' }, 1_600);
+    context = transition(context, { type: 'CANCEL_HOLD_RELEASED' }, 1_700);
+
+    expect(context.state).toBe('paused');
+    expect(context.elapsedMs).toBe(1_000);
+    expect(context.selectedDurationSeconds).toBe(30);
+
+    context = transition(context, { type: 'CANCEL_HOLD_STARTED' }, 1_800);
+    context = transition(context, { type: 'CANCEL_CONFIRMED' }, 3_300);
+    context = transition(context, { type: 'CLEANUP_SUCCEEDED' }, 3_400);
+    expect(context.state).toBe('idle');
+    expect(context.selectedDurationSeconds).toBe(30);
   });
 
   it('preserves finalized URI after persistence failure for retry save', () => {
@@ -169,6 +191,8 @@ describe('recording state machine', () => {
     context = transition(context, { type: 'DELETE_RECORDING' }, 31_200);
     expect(context.state).toBe('idle');
     expect(context.recordingUri).toBeNull();
+    expect(context.selectedDurationSeconds).toBe(60);
+    expect(context.completedAtMs).toBeNull();
   });
 
   it('restores a verified local completed take without entering recorder lifecycle', () => {

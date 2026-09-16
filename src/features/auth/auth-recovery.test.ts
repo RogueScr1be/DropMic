@@ -91,7 +91,7 @@ describe('local attempt recovery', () => {
       createdAt: 1000,
     };
 
-    expect(authFlowResumeStep({ user: { is_anonymous: false } }, pendingAuth)).toBe('onboarding');
+    expect(authFlowResumeStep({ user: { is_anonymous: false } }, pendingAuth)).toBe('complete');
     expect(authFlowResumeStep({ user: { is_anonymous: true } }, pendingAuth)).toBe('otp');
     expect(authFlowResumeStep(null, { ...pendingAuth, intent: 'existing-sign-in' })).toBe('sign_in_otp');
   });

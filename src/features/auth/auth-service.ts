@@ -1,6 +1,7 @@
 import {
   clearPendingAuth,
   clearUnclaimedAttempt,
+  getPendingAuth,
   getUnclaimedAttempt,
   savePendingAuth,
   type UnclaimedAttempt,
@@ -50,11 +51,13 @@ export async function completeAuthCallback(payload?: AuthCallbackPayload | null)
     if (!currentSession) {
       throw new AuthServiceError('This verification link is invalid or expired.');
     }
+    await assertConversionContinuity(currentSession);
     await clearPendingAuth();
     return currentSession;
   }
 
   if (currentSession?.access_token === payload.accessToken) {
+    await assertConversionContinuity(currentSession);
     await clearPendingAuth();
     return currentSession;
   }
@@ -67,6 +70,7 @@ export async function completeAuthCallback(payload?: AuthCallbackPayload | null)
   if (!result.data.session) {
     throw new AuthServiceError('This verification link is invalid or expired.');
   }
+  await assertConversionContinuity(result.data.session);
   await clearPendingAuth();
   return result.data.session;
 }
@@ -111,6 +115,7 @@ export async function verifyEmailConversion(email: string, token: string) {
   if (!result.data.session) {
     throw new AuthServiceError('The code was accepted but no session was returned.');
   }
+  await assertConversionContinuity(result.data.session);
   await clearPendingAuth();
   return result.data.session;
 }
@@ -220,4 +225,17 @@ export async function deleteAccount() {
   await clearUnclaimedAttempt();
   await clearPendingAuth();
   await client.auth.signOut({ scope: 'local' });
+}
+
+async function assertConversionContinuity(session: { user?: { id?: string } } | null) {
+  const pendingAuth = await getPendingAuth();
+  if (pendingAuth?.intent !== 'anonymous-conversion' || !pendingAuth.anonymousUserId) {
+    return;
+  }
+  if (session?.user?.id === pendingAuth.anonymousUserId) {
+    return;
+  }
+  throw new AuthServiceError(
+    'That email belongs to an existing account. Use the returning-user sign-in path before recording a new Drop; this saved take stays on this device.',
+  );
 }

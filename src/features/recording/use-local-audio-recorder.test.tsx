@@ -1,5 +1,6 @@
 import { act, create } from 'react-test-renderer';
-import { describe, expect, it, jest, beforeEach } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { Platform } from 'react-native';
 
 import { useLocalAudioRecorder } from './use-local-audio-recorder';
 
@@ -20,6 +21,8 @@ const mockPlayer = {
 };
 
 const mockDeleteFile = jest.fn<() => Promise<void>>();
+const originalRevokeObjectURL = URL.revokeObjectURL;
+const originalPlatformOS = Platform.OS;
 
 jest.mock('expo-audio', () => ({
   RecordingPresets: { HIGH_QUALITY: {} },
@@ -46,6 +49,13 @@ describe('useLocalAudioRecorder', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockRecorder.uri = 'file:///drop.m4a';
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: jest.fn() });
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: originalPlatformOS });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: originalRevokeObjectURL });
   });
 
   it('uses one recorder object across pause and resume before finalizing one file', async () => {
@@ -160,6 +170,121 @@ describe('useLocalAudioRecorder', () => {
 
     expect(mockRecorder.stop).toHaveBeenCalledTimes(1);
     expect(mockDeleteFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not finalize a prepared recorder that never started', async () => {
+    let api!: ReturnType<typeof useLocalAudioRecorder>;
+    act(() => {
+      create(<Harness expose={(nextApi) => { api = nextApi; }} />);
+    });
+
+    await act(async () => {
+      await api.prepare();
+      await api.discardTransientRecording();
+    });
+
+    expect(mockRecorder.record).not.toHaveBeenCalled();
+    expect(mockRecorder.stop).not.toHaveBeenCalled();
+    expect(mockDeleteFile).not.toHaveBeenCalled();
+  });
+
+  it('revokes a replaced web recording exactly once after playback stops', async () => {
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
+    mockRecorder.uri = 'blob:replaced';
+    const revokeObjectURL = URL.revokeObjectURL as jest.Mock;
+    let api!: ReturnType<typeof useLocalAudioRecorder>;
+    act(() => {
+      create(<Harness expose={(nextApi) => { api = nextApi; }} />);
+    });
+
+    await act(async () => {
+      await api.play('blob:replaced');
+      await api.deleteRecording('blob:replaced');
+      await api.deleteRecording('blob:replaced');
+    });
+
+    expect(mockPlayer.pause).toHaveBeenCalledTimes(1);
+    expect(mockPlayer.remove).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+    expect(mockPlayer.remove.mock.invocationCallOrder[0]).toBeLessThan(revokeObjectURL.mock.invocationCallOrder[0]);
+  });
+
+  it('keeps an active web playback URL when player cleanup fails, then revokes on retry', async () => {
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
+    const revokeObjectURL = URL.revokeObjectURL as jest.Mock;
+    let api!: ReturnType<typeof useLocalAudioRecorder>;
+    act(() => {
+      create(<Harness expose={(nextApi) => { api = nextApi; }} />);
+    });
+
+    await act(async () => {
+      await api.play('blob:failed-cleanup');
+      mockPlayer.remove.mockImplementationOnce(() => {
+        throw new Error('native cleanup failed');
+      });
+      await expect(api.deleteRecording('blob:failed-cleanup')).rejects.toThrow(
+        'Unable to stop saved take playback. Your saved take is still available.',
+      );
+    });
+
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await api.deleteRecording('blob:failed-cleanup');
+    });
+
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:failed-cleanup');
+    expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases a retained web recording once on unmount after playback cleanup', async () => {
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
+    mockRecorder.uri = 'blob:retained';
+    const revokeObjectURL = URL.revokeObjectURL as jest.Mock;
+    let api!: ReturnType<typeof useLocalAudioRecorder>;
+    let renderer!: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(<Harness expose={(nextApi) => { api = nextApi; }} />);
+    });
+
+    await act(async () => {
+      await api.prepare();
+      await api.start();
+      const uri = await api.finalize();
+      api.retainFinalizedRecording(uri as string);
+      await api.play(uri as string);
+    });
+    await act(async () => {
+      renderer.unmount();
+      await Promise.resolve();
+    });
+
+    expect(mockPlayer.pause).toHaveBeenCalledTimes(1);
+    expect(mockPlayer.remove).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:retained');
+    expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+  });
+
+  it('revokes an abandoned active web recording once on unmount', async () => {
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
+    mockRecorder.uri = 'blob:abandoned';
+    const revokeObjectURL = URL.revokeObjectURL as jest.Mock;
+    let api!: ReturnType<typeof useLocalAudioRecorder>;
+    let renderer!: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(<Harness expose={(nextApi) => { api = nextApi; }} />);
+    });
+
+    await act(async () => {
+      await api.prepare();
+      await api.start();
+      renderer.unmount();
+      await Promise.resolve();
+    });
+
+    expect(mockRecorder.stop).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:abandoned');
+    expect(revokeObjectURL).toHaveBeenCalledTimes(1);
   });
 
   it('retains a finalized completed file until explicit deletion', async () => {

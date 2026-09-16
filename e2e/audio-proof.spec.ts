@@ -266,39 +266,48 @@ test('runs the local first-use loop and keeps the recording on-device', async ({
   await page.getByRole('button', { name: 'Close completed take' }).click();
   await expect(page.getByTestId('topic-reveal')).toBeVisible();
   await expect(page.getByLabel(/^Speaking prompt:/)).toHaveAttribute('aria-label', selectedPrompt ?? '');
+  await expect(page.getByTestId('retained-take-card')).toBeVisible();
   await page.getByRole('button', { name: 'Let’s Go!' }).click();
   await expect(page.getByTestId('duration-selection')).toBeVisible();
-  await page.getByRole('button', { name: 'Let’s Go!' }).click();
   await expect(page.getByRole('heading', { name: 'You have a saved take.' })).toBeVisible();
-  await page.getByRole('button', { name: 'Keep Saved Take' }).click();
+  await expect(page.getByTestId('duration-selection').getByRole('button', { name: 'Let’s Go!' })).toHaveCount(0);
+  await page.getByRole('radio', { name: '60 seconds' }).click();
+  await page.getByRole('button', { exact: true, name: 'Keep Saved Take and Start' }).click();
+  await expect(page.getByRole('button', { name: 'Cancel countdown' })).toBeVisible({ timeout: 8_000 });
+  expect((await audioProof(page)).revokedUrls).toHaveLength(0);
+  expect((await audioProof(page)).recorderEvents.filter((event) => event === 'stop')).toHaveLength(1);
+  expect(networkProof.flowCompletionRequests).toHaveLength(1);
+  await page.getByRole('button', { name: 'Cancel countdown' }).click();
+  await page.getByRole('button', { name: 'Back to prompt' }).click();
   await expect(page.getByTestId('topic-reveal')).toBeVisible();
-  await page.getByRole('button', { name: 'Resume saved take' }).click();
+  await page.getByRole('button', { name: 'Resume Saved Drop' }).click();
   await expect(page.getByRole('heading', { name: 'Great Job!' })).toBeVisible();
   await expect(page.getByTestId('recording-uri')).toHaveText(recordingUri ?? '');
   expect((await audioProof(page)).revokedUrls).toHaveLength(0);
   expect(networkProof.flowCompletionRequests).toHaveLength(1);
 
-  await page.getByRole('button', { name: 'Play recording' }).click();
+  await page.getByRole('button', { name: 'Play Drop' }).click();
   await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();
   await expect.poll(async () => (await audioProof(page)).playbackEvents).toContain('play');
   await page.getByRole('button', { name: 'Close completed take' }).click();
   await expect(page.getByTestId('topic-reveal')).toBeVisible();
   await expect.poll(async () => (await audioProof(page)).playbackEvents).toEqual(expect.arrayContaining(['play', 'pause', 'remove-src']));
-  await expect(page.getByRole('button', { name: 'Resume saved take' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Resume Saved Drop' })).toBeVisible();
 
   await page.getByRole('button', { name: 'Let’s Go!' }).click();
   await expect(page.getByTestId('duration-selection')).toBeVisible();
-  await page.getByRole('button', { name: 'Let’s Go!' }).click();
   await expect(page.getByRole('heading', { name: 'You have a saved take.' })).toBeVisible();
-  await page.getByRole('button', { name: 'Keep Saved Take' }).click();
-  await expect(page.getByTestId('topic-reveal')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Resume saved take' })).toBeVisible();
+  await expect(page.getByTestId('duration-selection').getByRole('button', { name: 'Let’s Go!' })).toHaveCount(0);
+  await page.getByRole('radio', { name: '60 seconds' }).click();
+  await page.getByRole('button', { exact: true, name: 'Keep Saved Take and Start' }).click();
+  await expect(page.getByRole('button', { name: 'Cancel countdown' })).toBeVisible({ timeout: 8_000 });
+  expect((await audioProof(page)).revokedUrls).toHaveLength(0);
+  await page.getByRole('button', { name: 'Cancel countdown' }).click();
 
-  await page.getByRole('button', { name: 'Let’s Go!' }).click();
   await expect(page.getByTestId('duration-selection')).toBeVisible();
-  await page.getByRole('button', { name: 'Let’s Go!' }).click();
   await expect(page.getByRole('heading', { name: 'You have a saved take.' })).toBeVisible();
-  await page.getByRole('button', { name: 'Delete Take and Start' }).click();
+  await expect(page.getByTestId('duration-selection').getByRole('button', { name: 'Let’s Go!' })).toHaveCount(0);
+  await page.getByRole('button', { exact: true, name: 'Delete Take and Start' }).click();
   await expect(page.getByRole('button', { name: 'Cancel countdown' })).toBeVisible({ timeout: 8_000 });
   expect((await audioProof(page)).revokedUrls).toEqual([recordingUri]);
   expect((await audioProof(page)).playbackEvents).toEqual(expect.arrayContaining(['play', 'pause', 'remove-src']));
@@ -333,7 +342,7 @@ test('pauses and resumes one recorder without counting paused wall time', async 
   expect(networkProof.flowCompletionRequests).toHaveLength(1);
 });
 
-test('preserves on early cancel release and revokes once on confirmed cancellation', async ({ page }) => {
+test('cancels directly at the hold threshold and preserves early release', async ({ page }) => {
   test.setTimeout(60_000);
   const stoppedTracks: string[] = [];
   const networkProof = createNetworkProof();
@@ -346,16 +355,16 @@ test('preserves on early cancel release and revokes once on confirmed cancellati
   const pausedColumn = await page.getByTestId('paused-control-column').boundingBox();
   const resumeBox = await page.getByRole('button', { name: 'Resume' }).boundingBox();
   const holdBox = await page.getByTestId('hold-to-cancel').boundingBox();
-  const confirmBox = await page.getByRole('button', { name: 'Confirm cancel recording' }).boundingBox();
   expect(pausedColumn?.width).toBeGreaterThanOrEqual(260);
   expect(resumeBox?.width).toBeGreaterThanOrEqual(260);
   expect(holdBox?.width).toBeGreaterThanOrEqual(260);
-  expect(confirmBox?.height).toBeGreaterThanOrEqual(48);
+  await expect(page.getByRole('button', { name: 'Hold to Cancel' })).toHaveCount(1);
+  await expect(page.getByText('Confirm Cancel')).toHaveCount(0);
 
   const hold = page.getByTestId('hold-to-cancel');
   const box = await hold.boundingBox();
   expect(box).not.toBeNull();
-  await page.mouse.move((box?.x ?? 0) + 10, (box?.y ?? 0) + 10);
+  await hold.hover();
   await page.mouse.down();
   await page.waitForTimeout(400);
   await page.mouse.up();
@@ -363,22 +372,17 @@ test('preserves on early cancel release and revokes once on confirmed cancellati
   expect((await audioProof(page)).recorderEvents).toEqual(['start', 'pause']);
 
   const pausedRemaining = await page.locator('[aria-live="polite"]').first().textContent();
-  await page.getByRole('button', { name: 'Confirm cancel recording' }).click();
-  await expect(page.getByRole('heading', { name: 'Cancel this recording?' })).toBeVisible();
-  await expect(page.getByText('The local recording will be deleted from this device.')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Resume' })).toBeVisible();
   await expect(page.locator('[aria-live="polite"]').first()).toHaveText(pausedRemaining ?? '');
   expect((await audioProof(page)).recorderEvents).toEqual(['start', 'pause']);
 
-  await page.getByRole('button', { name: 'Keep Recording' }).click();
-  await expect(page.getByRole('heading', { name: 'Cancel this recording?' })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Resume' })).toBeVisible();
-  await expect(page.locator('[aria-live="polite"]').first()).toHaveText(pausedRemaining ?? '');
-  expect((await audioProof(page)).recorderEvents).toEqual(['start', 'pause']);
-
-  await page.getByRole('button', { name: 'Confirm cancel recording' }).click();
-  await page.getByRole('button', { name: 'Delete Recording' }).click();
+  const fullHold = await hold.boundingBox();
+  expect(fullHold).not.toBeNull();
+  await hold.hover();
+  await page.mouse.down();
+  await expect(page.getByText('Keep holding to cancel')).toBeVisible();
+  await page.waitForTimeout(1_650);
   await expect(page.getByRole('radio', { name: '30 seconds' })).toBeVisible({ timeout: 8_000 });
+  await page.mouse.up();
   const proof = await audioProof(page);
   expect(proof.recorderConstructed).toBe(1);
   expect(proof.recorderEvents).toEqual(['start', 'pause', 'stop']);

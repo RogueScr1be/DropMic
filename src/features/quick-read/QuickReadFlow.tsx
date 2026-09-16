@@ -193,10 +193,9 @@ export function QuickReadFlow({
 
           {currentStep === 'consent' && (
             <>
-              <Text accessibilityRole="header" style={styles.title}>A short read on your take.</Text>
+              <Text accessibilityRole="header" style={styles.title}>Quick Read</Text>
               <Text style={styles.body}>Upload this recording for a brief, private analysis of clarity, structure, specificity, and concision.</Text>
               <View style={styles.notice}>
-                <Text style={styles.noticeTitle}>What happens next</Text>
                 <Text style={styles.noticeBody}>Your audio is sent securely for processing, deleted after successful analysis, and never added to your durable practice metrics.</Text>
                 <Text style={styles.noticeBody}>The transcript is retained for up to 30 days. You can use up to 3 Quick Reads per day.</Text>
               </View>

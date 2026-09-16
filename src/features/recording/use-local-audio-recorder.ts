@@ -38,6 +38,7 @@ export function useLocalAudioRecorder() {
   const finalizedUri = useRef<string | null>(null);
   const retainedUris = useRef(new Set<string>());
   const deletedUris = useRef(new Set<string>());
+  const releasedBlobUris = useRef(new Set<string>());
   const deletePromises = useRef(new Map<string, Promise<void>>());
   const finalizePromise = useRef<Promise<string | null> | null>(null);
   const discardPromise = useRef<Promise<void> | null>(null);
@@ -161,6 +162,14 @@ export function useLocalAudioRecorder() {
     }
   }, [player]);
 
+  const releaseBlobUri = useCallback((uri: string) => {
+    if (Platform.OS !== 'web' || !uri.startsWith('blob:') || releasedBlobUris.current.has(uri)) {
+      return;
+    }
+    releasedBlobUris.current.add(uri);
+    URL.revokeObjectURL(uri);
+  }, []);
+
   const deleteRecording = useCallback(async (uri: string) => {
     if (deletedUris.current.has(uri)) {
       return;
@@ -175,9 +184,7 @@ export function useLocalAudioRecorder() {
         await stopPlayback();
       }
       if (Platform.OS === 'web') {
-        if (uri.startsWith('blob:')) {
-          URL.revokeObjectURL(uri);
-        }
+        releaseBlobUri(uri);
         deletedUris.current.add(uri);
         return;
       }
@@ -191,7 +198,7 @@ export function useLocalAudioRecorder() {
     } finally {
       deletePromises.current.delete(uri);
     }
-  }, [stopPlayback]);
+  }, [releaseBlobUri, stopPlayback]);
 
   const discardTransientRecording = useCallback(async () => {
     if (discardPromise.current) {
@@ -199,7 +206,8 @@ export function useLocalAudioRecorder() {
     }
 
     discardPromise.current = (async () => {
-      const uri = await finalize();
+      const wasPrepared = recorderPhase.current === 'prepared';
+      const uri = wasPrepared ? null : await finalize();
       if (uri && !retainedUris.current.has(uri)) {
         await deleteRecording(uri);
       }
@@ -230,10 +238,29 @@ export function useLocalAudioRecorder() {
   }, []);
 
   useEffect(() => () => {
-    if (recorderPhase.current !== 'idle') {
-      void discardTransientRecording().catch(() => undefined);
-    }
-  }, [discardTransientRecording]);
+    void (async () => {
+      const playerUri = lastPlayerUri.current;
+      let playbackReleased = !playerUri;
+      if (playerUri) {
+        try {
+          await stopPlayback();
+          playbackReleased = true;
+        } catch {
+          // Keep the active playback URI unreleased if the player cannot be stopped safely.
+        }
+      }
+      if (recorderPhase.current !== 'idle') {
+        await discardTransientRecording().catch(() => undefined);
+      }
+      if (Platform.OS === 'web') {
+        for (const uri of retainedUris.current) {
+          if (uri !== playerUri || playbackReleased) {
+            releaseBlobUri(uri);
+          }
+        }
+      }
+    })();
+  }, [discardTransientRecording, releaseBlobUri, stopPlayback]);
 
   const deleteRetainedRecording = useCallback(async (uri: string) => {
     releaseRetainedRecording(uri);

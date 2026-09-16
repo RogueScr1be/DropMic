@@ -2,7 +2,13 @@ import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
-import { createTakeIdentity } from './attempt-identity';
+import {
+  consumeTakeIdentity,
+  createConsumedTakeIdentity,
+  createPendingTakeIdentity,
+  createTakeIdentity,
+  prepareIdentityForRecording,
+} from './attempt-identity';
 
 /* eslint-disable import/first */
 
@@ -99,6 +105,44 @@ describe('Quick Read attempt identity isolation', () => {
 
     expect(second.clientAttemptId).not.toBe(first.clientAttemptId);
     expect(second.quickReadIdempotencyKey).not.toBe(first.quickReadIdempotencyKey);
+  });
+
+  it('keeps an unused identity pending and consumes it exactly once', () => {
+    const identity = createTakeIdentity(() => 'take-a');
+    const pending = createPendingTakeIdentity(identity);
+    const prepared = prepareIdentityForRecording(pending, () => createTakeIdentity(() => 'unused'));
+
+    expect(prepared.rotated).toBe(false);
+    expect(prepared.lifecycle).toEqual(pending);
+    expect(consumeTakeIdentity(prepared.lifecycle)).toEqual({ identity, status: 'consumed' });
+    expect(consumeTakeIdentity({ identity, status: 'consumed' })).toEqual({ identity, status: 'consumed' });
+  });
+
+  it('rotates a consumed identity once and leaves the replacement pending', () => {
+    const first = createTakeIdentity(() => 'take-a');
+    const replacement = createTakeIdentity(() => 'take-b');
+    const prepared = prepareIdentityForRecording(
+      createConsumedTakeIdentity(first),
+      () => replacement,
+    );
+
+    expect(prepared).toEqual({ lifecycle: { identity: replacement, status: 'pending' }, rotated: true });
+    expect(prepareIdentityForRecording(prepared.lifecycle, () => createTakeIdentity(() => 'take-c'))).toEqual({
+      lifecycle: prepared.lifecycle,
+      rotated: false,
+    });
+  });
+
+  it('preserves distinct identities for two completed drops and the same identity for retries', () => {
+    const ids = ['take-a', 'key-a', 'take-b', 'key-b'];
+    const createId = jest.fn(() => ids.shift()!);
+    const first = createPendingTakeIdentity(createTakeIdentity(createId));
+    const completedFirst = consumeTakeIdentity(first);
+    const second = prepareIdentityForRecording(completedFirst, () => createTakeIdentity(createId));
+
+    expect(second.lifecycle.identity).not.toEqual(first.identity);
+    expect(consumeTakeIdentity(second.lifecycle)).toEqual({ ...second.lifecycle, status: 'consumed' });
+    expect(second.lifecycle.identity).not.toEqual(completedFirst.identity);
   });
 
   it('uses a different server attempt for a new take', async () => {

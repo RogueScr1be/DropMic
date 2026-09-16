@@ -64,6 +64,20 @@ describe('auth service', () => {
     await expect(getPendingAuth()).resolves.toBeNull();
   });
 
+  it('rejects an email conversion that returns a different owner UUID', async () => {
+    await authService.beginEmailConversion('person@example.com');
+    mockSupabase.auth.verifyOtp.mockResolvedValueOnce({
+      data: { session: { user: { id: 'existing-user' }, access_token: 'token-b' } },
+      error: null,
+    });
+
+    await expect(authService.verifyEmailConversion('person@example.com', '123456')).rejects.toThrow('existing account');
+    await expect(getPendingAuth()).resolves.toMatchObject({
+      intent: 'anonymous-conversion',
+      anonymousUserId: 'user-1',
+    });
+  });
+
   it('records the anonymous identity when an email conversion OTP is requested', async () => {
     await authService.beginEmailConversion('person@example.com');
 

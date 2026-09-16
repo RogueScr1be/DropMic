@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { useAuthFlowStore } from './auth-flow-store';
-import { authFlowResumeStep, clearPendingAuth, getPendingAuth } from './auth-recovery';
+import { authFlowResumeStep, getPendingAuth } from './auth-recovery';
 import {
   AuthServiceError,
   beginEmailConversion,
@@ -10,22 +10,22 @@ import {
   claimUnclaimedAttempt,
   deleteAccount,
   getSession,
-  saveOnboarding,
   signOut,
   verifyEmailConversion,
   verifyEmailSignIn,
 } from './auth-service';
-import { SPEAKING_BLOCKERS, SPEAKING_GOALS } from '@/features/onboarding/onboarding-options';
 import type { UnclaimedAttempt } from './auth-recovery';
 
 export function SignupFlow({
   attempt,
+  mode = 'conversion',
   onAttemptClaimed,
   onClose,
   onSignedOut,
   visible,
 }: {
   attempt: UnclaimedAttempt | null;
+  mode?: 'conversion' | 'sign-in';
   onAttemptClaimed?: (attemptId: string) => void;
   onClose: () => void;
   onSignedOut: () => void;
@@ -34,20 +34,14 @@ export function SignupFlow({
   const step = useAuthFlowStore((state) => state.step);
   const activeStep = step === 'closed' ? 'explanation' : step;
   const email = useAuthFlowStore((state) => state.email);
-  const ageGateConfirmed = useAuthFlowStore((state) => state.ageGateConfirmed);
-  const goals = useAuthFlowStore((state) => state.goals);
-  const blockers = useAuthFlowStore((state) => state.blockers);
-  const freeTextGoal = useAuthFlowStore((state) => state.freeTextGoal);
   const setStep = useAuthFlowStore((state) => state.setStep);
   const setEmail = useAuthFlowStore((state) => state.setEmail);
-  const setAgeGateConfirmed = useAuthFlowStore((state) => state.setAgeGateConfirmed);
-  const toggleGoal = useAuthFlowStore((state) => state.toggleGoal);
-  const toggleBlocker = useAuthFlowStore((state) => state.toggleBlocker);
-  const setFreeTextGoal = useAuthFlowStore((state) => state.setFreeTextGoal);
   const reset = useAuthFlowStore((state) => state.reset);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [deleteConfirmation, setDeleteConfirmation] = useState(false);
+  const isPostRecordingConversion = Boolean(attempt);
+  const claimedAttemptRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!visible) {
@@ -61,22 +55,15 @@ export function SignupFlow({
         return;
       }
       const nextStep = authFlowResumeStep(session, pendingAuth);
-      if (nextStep === 'onboarding') {
-        await clearPendingAuth();
-        if (!cancelled) {
-          setStep(nextStep);
-        }
-        return;
-      }
       if (nextStep === 'otp' || nextStep === 'sign_in_otp') {
         setEmail(pendingAuth?.email ?? '');
       }
-      setStep(nextStep);
+      setStep(nextStep === 'explanation' && mode === 'sign-in' ? 'sign_in_email' : nextStep);
     })();
     return () => {
       cancelled = true;
     };
-  }, [setEmail, setStep, visible]);
+  }, [mode, setEmail, setStep, visible]);
 
   const close = () => {
     reset();
@@ -115,20 +102,36 @@ export function SignupFlow({
         await verifyEmailConversion(email, otp);
       }
       setOtp('');
-      setStep('onboarding');
+      await finishSetup();
     });
 
   const [otp, setOtp] = useState('');
 
-  const finishOnboarding = () =>
-    void run(async () => {
-      await saveOnboarding({ ageGateConfirmed, goals, blockers, freeTextGoal });
-      const claimedAttemptId = await claimUnclaimedAttempt(attempt);
-      if (typeof claimedAttemptId === 'string') {
-        onAttemptClaimed?.(claimedAttemptId);
-      }
+  const finishSetup = async () => {
+    if (!attempt) {
       setStep('complete');
-    });
+      return;
+    }
+    if (attempt && claimedAttemptRef.current === attempt.clientAttemptId) {
+      setStep('complete');
+      return;
+    }
+    const claimedAttemptId = await claimUnclaimedAttempt(attempt);
+    if (typeof claimedAttemptId === 'string') {
+      claimedAttemptRef.current = attempt?.clientAttemptId ?? claimedAttemptId;
+      onAttemptClaimed?.(claimedAttemptId);
+    }
+    setStep('complete');
+  };
+
+  useEffect(() => {
+    if (!visible || activeStep !== 'complete' || !attempt || claimedAttemptRef.current === attempt.clientAttemptId) {
+      return;
+    }
+    void run(finishSetup);
+    // finishSetup intentionally captures the current visible attempt and callbacks.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeStep, attempt, visible]);
 
   const handleSignOut = () =>
     void run(async () => {
@@ -156,22 +159,21 @@ export function SignupFlow({
 
           {activeStep === 'explanation' && (
             <>
-              <Text accessibilityRole="header" style={styles.title}>Sign Up for DropMic</Text>
-              <Text style={styles.body}>Improve your speaking and social skills, 60 seconds at a time. Ready for your first Read?</Text>
-              <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: ageGateConfirmed }} onPress={() => setAgeGateConfirmed(!ageGateConfirmed)} style={styles.checkboxRow}>
-                <View style={[styles.checkbox, ageGateConfirmed && styles.checkboxChecked]}>{ageGateConfirmed && <Text style={styles.checkmark}>✓</Text>}</View>
-                <Text style={styles.checkboxLabel}>I confirm I am 13 or older.</Text>
-              </Pressable>
-              <FlowButton disabled={!ageGateConfirmed} label="Continue with email" onPress={() => setStep('email')} />
-              <FlowButton label="Sign in to an existing account" onPress={() => setStep('sign_in_email')} secondary />
-              <FlowButton label="Not now" onPress={close} secondary />
+              <Text accessibilityRole="header" style={styles.title}>{isPostRecordingConversion ? 'Join DropMic' : 'Returning to DropMic?'}</Text>
+              <Text style={styles.body}>
+                {isPostRecordingConversion
+                  ? 'Improve your speaking and social skills, 60 seconds at a time. Ready for your first Read?'
+                  : 'Sign in before recording so new Drops attach to your existing account.'}
+              </Text>
+              <FlowButton label={isPostRecordingConversion ? 'Sign Up' : 'Create a new account'} onPress={() => setStep('email')} />
+              <FlowButton label="Sign In" onPress={() => setStep('sign_in_email')} secondary />
             </>
           )}
 
           {(activeStep === 'email' || activeStep === 'sign_in_email') && (
             <>
               <Text accessibilityRole="header" style={styles.title}>{activeStep === 'email' ? 'Where should we send the code?' : 'Welcome back.'}</Text>
-              <Text style={styles.body}>{activeStep === 'email' ? 'We use a one-time code. No password required.' : 'Enter the email on your MicDrop account.'}</Text>
+              <Text style={styles.body}>{activeStep === 'email' ? 'We use a one-time code. No password required.' : 'Enter the email on your DropMic account.'}</Text>
               <TextInput autoCapitalize="none" autoComplete="email" autoCorrect={false} keyboardType="email-address" onChangeText={setEmail} placeholder="you@example.com" style={styles.input} value={email} />
               <FlowButton disabled={busy} label={busy ? 'Sending code…' : 'Send email code'} onPress={sendCode} />
               <FlowButton label="Back" onPress={() => setStep('explanation')} secondary />
@@ -188,23 +190,10 @@ export function SignupFlow({
             </>
           )}
 
-          {activeStep === 'onboarding' && (
-            <>
-              <Text accessibilityRole="header" style={styles.title}>What do you want to unlock?</Text>
-              <Text style={styles.body}>Pick at least one goal and one thing that gets in the way. This only personalizes your next local practice.</Text>
-              <Text style={styles.label}>MY GOALS</Text>
-              <OptionList options={SPEAKING_GOALS} selected={goals} onToggle={toggleGoal} />
-              <Text style={styles.label}>WHAT STOPS ME</Text>
-              <OptionList options={SPEAKING_BLOCKERS} selected={blockers} onToggle={toggleBlocker} />
-              <TextInput multiline onChangeText={setFreeTextGoal} placeholder="Optional: a specific speaking situation" style={[styles.input, styles.multilineInput]} value={freeTextGoal} />
-              <FlowButton disabled={busy || goals.length === 0 || blockers.length === 0} label={busy ? 'Saving locally…' : 'Finish setup'} onPress={finishOnboarding} />
-            </>
-          )}
-
           {activeStep === 'complete' && (
             <>
               <Text accessibilityRole="header" style={styles.title}>Your Quick Read is ready.</Text>
-              <Text style={styles.body}>{attempt ? 'The completed attempt metadata is claimed to your account. Your recording remains on this device; nothing was uploaded or analyzed.' : 'Your account is ready. Any recording remains on this device; nothing was uploaded or analyzed.'}</Text>
+              <Text style={styles.body}>{attempt ? 'This take is attached to your account. Your recording remains on this device until you approve the Quick Read upload.' : 'Your account is ready. New recordings can attach to this sign-in.'}</Text>
               <FlowButton label="Done" onPress={close} />
               <FlowButton label="Sign out" onPress={handleSignOut} secondary />
               {!deleteConfirmation ? (
@@ -226,21 +215,6 @@ export function SignupFlow({
   );
 }
 
-function OptionList({ options, selected, onToggle }: { options: readonly string[]; selected: string[]; onToggle: (value: string) => void }) {
-  return (
-    <View style={styles.optionList}>
-      {options.map((option) => {
-        const isSelected = selected.includes(option);
-        return (
-          <Pressable accessibilityLabel={option} accessibilityRole="checkbox" accessibilityState={{ checked: isSelected }} key={option} onPress={() => onToggle(option)} style={[styles.option, isSelected && styles.optionSelected]}>
-            <Text style={[styles.optionText, isSelected && styles.optionTextSelected]}>{option}</Text>
-          </Pressable>
-        );
-      })}
-    </View>
-  );
-}
-
 function FlowButton({ disabled = false, label, onPress, secondary = false }: { disabled?: boolean; label: string; onPress: () => void; secondary?: boolean }) {
   return (
     <Pressable accessibilityLabel={label} accessibilityRole="button" accessibilityState={{ disabled }} disabled={disabled} onPress={onPress} style={[styles.button, secondary && styles.secondaryButton, disabled && styles.disabled]}>
@@ -259,24 +233,12 @@ const styles = StyleSheet.create({
   closeText: { color: '#526c63', fontSize: 14, fontWeight: '700' },
   title: { color: '#18332d', fontFamily: 'Georgia', fontSize: 32, fontWeight: '700', lineHeight: 38 },
   body: { color: '#526c63', fontSize: 16, lineHeight: 24 },
-  checkboxRow: { alignItems: 'center', flexDirection: 'row', gap: 12, minHeight: 48 },
-  checkbox: { alignItems: 'center', borderColor: '#b9aa98', borderRadius: 6, borderWidth: 1, height: 24, justifyContent: 'center', width: 24 },
-  checkboxChecked: { backgroundColor: '#18332d', borderColor: '#18332d' },
-  checkmark: { color: '#86c7b3', fontSize: 17, fontWeight: '900' },
-  checkboxLabel: { color: '#18332d', flex: 1, fontSize: 15 },
   input: { backgroundColor: '#f4ebdd', borderColor: '#c4b5a2', borderRadius: 12, borderWidth: 1, color: '#18332d', fontSize: 16, minHeight: 54, paddingHorizontal: 16 },
-  multilineInput: { minHeight: 86, paddingTop: 14, textAlignVertical: 'top' },
   button: { alignItems: 'center', backgroundColor: '#e4572e', borderRadius: 12, justifyContent: 'center', minHeight: 54, paddingHorizontal: 16 },
   secondaryButton: { backgroundColor: 'transparent', borderColor: '#b9aa98', borderWidth: 1 },
   buttonText: { color: '#fffaf2', fontSize: 15, fontWeight: '900' },
   secondaryButtonText: { color: '#18332d' },
   disabled: { opacity: 0.45 },
-  label: { color: '#799087', fontSize: 11, fontWeight: '900', letterSpacing: 2, marginTop: 6 },
-  optionList: { gap: 8 },
-  option: { backgroundColor: '#f4ebdd', borderColor: '#c4b5a2', borderRadius: 10, borderWidth: 1, minHeight: 46, justifyContent: 'center', paddingHorizontal: 14 },
-  optionSelected: { backgroundColor: '#18332d', borderColor: '#18332d' },
-  optionText: { color: '#18332d', fontSize: 14 },
-  optionTextSelected: { color: '#f4ebdd', fontWeight: '700' },
   error: { backgroundColor: '#f8d8ca', borderRadius: 10, color: '#8c321e', fontSize: 14, lineHeight: 20, padding: 12 },
   confirmationBox: { gap: 12 },
   warning: { color: '#8c321e', fontSize: 14, lineHeight: 20 },
