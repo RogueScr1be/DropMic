@@ -570,3 +570,72 @@ loading current Metro JavaScript is not sufficient.
 
 Revisit only if the Expo app-config source of truth changes or native iOS state
 is intentionally brought under version control.
+## 2026-09-14 — Track pending versus consumed TakeIdentity at the parent boundary
+
+### Decision
+
+The parent owns a canonical ref containing the active `TakeIdentity` and a `pending`/`consumed` marker. Initial and explicitly preallocated identities are pending. Permission success immediately before countdown consumes the identity. A fresh recording start rotates only when the current identity is consumed, and passes the replacement into the existing `beginNewTake()` reset boundary exactly once.
+
+### Context
+
+The previous lifecycle created an identity at mount and correctly rotated it for Retry, Delete, Hold-to-Cancel cleanup, and Take Two, but ordinary New Drop and retained-take starts could reach `beginRecording()` with an identity already used by a completed recording. The completion bell exposed this through its intentional per-attempt deduplication.
+
+### Alternatives considered
+
+- Rotate unconditionally at every `beginRecording()` call.
+- Rotate only from visual topic or completion navigation handlers.
+- Track identity consumption explicitly at the parent recording boundary.
+
+### Tradeoffs
+
+Unconditional rotation would break permission retry, owner-preparation retry, and existing preallocation paths. Topic navigation is not itself a recording attempt. The explicit marker keeps pending identities stable through pre-recording failures while preserving same-take identity across persistence, Quick Read, auth, playback, and recovery operations.
+
+### Refactor trigger
+
+Revisit if recording start becomes a shared state-machine command or if retained local recordings become a multi-item library; then move identity lifecycle ownership into that canonical domain boundary rather than duplicating parent orchestration.
+
+## 2026-09-14 — Keep prepared recorder cancellation separate from blob finalization
+
+### Decision
+
+Treat `prepared` as a distinct recorder lifecycle phase. Cancellation or unmount before `start()` must reset the phase without calling Expo `stop()`, because the web implementation creates a blob URL on every stop even when no recording began. Centralize web blob release behind an idempotent helper and release retained blobs only after playback cleanup.
+
+### Evidence and tradeoffs
+
+The saved Drop URL was not the URL being revoked; the extra URL came from finalizing the canceled countdown recorder. The repair preserves native file deletion, same-recorder pause/resume, retained playback, and non-blocking audio errors while removing the unnecessary web blob. Prepared native recorder resources remain owned by Expo's recorder object and are re-prepared or released with that object.
+
+### Refactor trigger
+
+Revisit only if Expo exposes a public recorder reset/dispose operation that can replace the current shared-object lifecycle, or if background recording introduces an additional prepared-resource boundary.
+
+## 2026-09-14 — Retire completed transient state at completion dismissal
+
+### Decision
+
+When a completed take is dismissed, stop any active playback and dispatch the existing state-only `completed -> idle` `DELETE_RECORDING` transition, guarded by the live recording-machine state. Then update presentation state. Do not add a `completed -> SELECT_DURATION` machine transition and do not normalize the machine from inside the duration control.
+
+### Context
+
+The completion screen and recording machine can otherwise diverge: the completion UI may be hidden while the machine remains `completed`, leaving duration selection able to dispatch an illegal event. The state-only transition clears transient machine completion fields while leaving the separately owned retained take, persisted Saved Drop, and consumed identity intact. The next genuine recording start retains the accepted R3B identity rotation boundary.
+
+### Evidence and tradeoffs
+
+The exact close → New Drop → select 60 → Keep Saved Take and Start path passed in browser proof and on both Release simulators. The retained recording remained playable, no recovery state appeared, and distinct client attempt identities were observed for successive completions. Repeated dismissal is a no-op after the first live-state transition. This keeps the repair at the presentation/machine boundary without redesigning retained-take ownership.
+
+### Refactor trigger
+
+Revisit only if retained recordings become a multi-item library or if completed-machine retirement gains domain side effects; until then, keep transient machine state and retained-take ownership separate.
+
+## 2026-09-16 — QA7 conditional acceptance and superseded layout findings
+
+### Decision
+
+Record QA7 as a CONDITIONAL PASS. Accepted evidence includes copy, the exact 20-prompt catalog, mirrored PromptCard quotes, the normal-flow closing-quote repair, recognizable settled uppercase `I` in portrait and landscape, completion animation, Reduced Motion, one completion bell per distinct identity without replay on Saved Drop reopen, the cold anonymous-owner timeout/single-flight repair, pending/consumed TakeIdentity rotation, recorder blob cleanup, saved-take completion-dismissal retirement, genuine 1,500ms Hold to Cancel, iPhone/iPad rotation with retained playback, and scrollable compact-landscape content.
+
+### Superseded findings
+
+R6 landscape “clipping” was offscreen content reachable by native scrolling, not clipping. R7A’s nested-flex diagnosis was disproven. R7B was fully rolled back. R8A found no prompt-data or settled-render loss for uppercase `I`; any remaining visual or animation observation must be investigated separately rather than recorded as data loss.
+
+### External caveats
+
+Physical-device VoiceOver, physical-device silent-mode/audio-session behavior, and live OTP without an authorized mailbox remain pending. The development Metro audio-path defect remains separate from embedded Release-asset acceptance. QA7 does not claim full physical-device acceptance.

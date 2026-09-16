@@ -9,6 +9,14 @@
 - Enforce the 13+ gate before account creation and keep account deletion behind an explicit confirmation.
 - Keep recording transitions explicit and fail closed; derive elapsed time from timestamps.
 - Keep Zustand limited to transient UI/session state. Put testable rules in pure TypeScript.
+- Never put an aggressive timeout around non-cancellable identity creation; share the underlying operation and clear its in-flight reference only after settlement.
+- Never automatically retry identity creation while the original operation remains unresolved; recheck the persisted session before a later retry.
+- A label that changes an action's meaning requires verifying and updating its handler; copy and behavior must never disagree.
+- Celebratory effects must trigger from the successful domain event, not component mount.
+- Nonessential audio failure must never block completion.
+- Treat Expo/Metro `unstable_path` as an encoded query payload: verify encoding is idempotent across every asset-metadata and URL-construction pass, and never allow a single Metro decode to receive a literal `%2F`.
+- Destructive hold gestures must distinguish early release from the completed threshold.
+- Release after a destructive hold threshold must not emit a stale state-machine event.
 - Treat countdown callbacks and local-file cleanup as asynchronous failure boundaries; verify current state before committing late callbacks.
 - Use runtime `MediaRecorder.isTypeSupported` in the audio adapter; never document Safari MIME support from the Expo preset alone.
 - Keep deferred platform support explicit in decision and failure logs; do not add platform-specific business logic to unblock an unavailable device.
@@ -66,6 +74,9 @@
 - R0D-C lifecycle acceptance is independent of email delivery: the development harness creates a unique confirmed synthetic user with a server-only service-role key, signs it in through the public client, and deletes it through the normal account-deletion path with an admin fallback. Never expose that key to Expo code or add auto-confirm behavior to production auth.
 - R0D-C permits `uploading → analyzing` when a persisted transcript lets a feedback retry skip transcription; keep retry limits and terminal-state protections unchanged.
 - Every distinct recording receives a fresh server attempt ID and Quick Read idempotency key; only retries of the same take may reuse them.
+- A pending `TakeIdentity` may be consumed by exactly one recording attempt. Preserve it through owner-preparation/permission failures, same-take retries, playback, recovery, auth conversion, and Quick Read retry; rotate it exactly once at a later genuine recording start. Parent orchestration tests must cover normal New Drop and Keep/Delete Saved Drop paths; isolated Quick Read tests are insufficient.
+- Presentation state must never expose controls whose events are illegal for the underlying recording-machine state; dismissing a completed take must retire only the completed transient machine state before duration selection.
+- Recorder cleanup must treat `prepared` as a never-started phase: do not finalize it on cancellation or unmount, and release web blob URLs idempotently only after playback stops. Test replaced, abandoned, retained, and unmounted URL ownership without revoking an actively playing source.
 - Manual cleanup acceptance is not production retention proof; automatic retention remains a pre-public-launch gate.
 - Account deletion is incomplete until database rows and Storage objects are independently verified absent.
 - Persistent coaching may store derived signals but cannot extend raw-audio or transcript retention.
@@ -74,3 +85,6 @@
 - Do not expose paid access or begin purchase/paywall R0F phases until the lifecycle-repair and minimum-Free gates are accepted; the non-live entitlement-authority foundation may be built earlier.
 - Take Two must derive owner identity from the verified JWT, match runs through stored `attempts.topic_id`, and compare only durable results/metrics without provider calls or database writes.
 - When Supabase project commands authenticate but function commands require a missing profile, use a command-scoped `SUPABASE_ACCESS_TOKEN`; bound and sanitize deployment diagnostics, classify packaging/auth versus upload/server stalls, and never change application code to compensate.
+- QA7 is conditionally accepted only with the recorded native/manual evidence and explicit external caveats; never claim full physical-device acceptance when VoiceOver, silent-mode/audio-session behavior, or live OTP remain pending.
+- QA7 R6/R7 history is superseded: offscreen landscape content was scrollable rather than clipped, the nested-flex diagnosis was disproven, R7B was rolled back, and missing uppercase `I` was not data or settled-render loss. Keep those findings historical and do not treat them as current defects.
+- The development Metro audio-path defect remains separate from embedded Release-asset acceptance.

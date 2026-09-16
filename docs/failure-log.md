@@ -265,3 +265,53 @@
 - Blast radius: simulator evidence could appear to validate the current build while actually exercising an older installed bundle identity.
 - Resolution: regenerate ignored native state from `app.json`, build the generated `.xcworkspace`, install the fresh `.app`, and prove `CFBundleIdentifier` from the installed bundle before accepting simulator evidence.
 - Guardrail: sanitized native-build copies must exclude nested `.DerivedData`, module caches, build outputs, protected artifacts, and stale generated `ios/` state. Do not count an old app loading current Metro JavaScript as bundle-identity proof.
+
+## 2026-09-14 — Hold-to-cancel threshold left a live timer after firing
+
+- Root cause: the hold control kept its interval alive after invoking cancellation, and its release guard could be reset before a later gesture event arrived.
+- Category: client gesture lifecycle.
+- Blast radius: a completed hold could continue dispatching timer work, and a post-threshold release could be misclassified as an early release.
+- Resolution: QA7-C clears the timer and gesture state before invoking the existing confirmed cancellation path; post-threshold release is ignored.
+- Guardrail: destructive hold gestures must distinguish early release from threshold completion and clean up on threshold, interruption, and unmount.
+
+## 2026-09-14 — Cold anonymous Mic Flow owner creation raced its UI timeout
+
+- Symptom: the iPad could display `Could not prepare your local recording owner` even though the native Supabase anonymous signup completed shortly afterward and persisted a valid session.
+- Root cause: owner preparation used a 750ms caller timeout around a non-cancellable anonymous signup. Native signup completed at approximately 852ms, so the caller returned failure while the original operation continued.
+- Resolution: owner preparation now uses a 5000ms bound, shares one underlying session-establishment operation across concurrent callers, and only clears its in-flight reference after that operation settles. A later retry rechecks the persisted session before creating another anonymous owner.
+- Diagnostics: development-only diagnostics retain `timeout`, `network`, `auth`, `invalid_session`, and `unknown` classifications without logging tokens, user IDs, email addresses, or provider metadata. The user-facing message remains concise.
+- Guardrail: never place an aggressive timeout around non-cancellable identity creation, and never automatically retry while the original identity operation remains unresolved.
+
+## 2026-09-14 — Parent recording orchestration reused a consumed TakeIdentity
+
+- Symptom: after one completed Drop, Completion → close → New Drop and Keep/Delete Saved Drop → new recording reused the prior client attempt and Quick Read idempotency identity. The iPad's second completion persisted successfully but its bell was suppressed as a duplicate attempt.
+- Root cause: the parent allocated a pending identity at mount and `beginRecording()` assumed it was always fresh. Existing explicit `beginNewTake()` paths were safe, but ordinary fresh-recording and retained-take start paths had no consumed marker.
+- Category: client lifecycle/idempotency.
+- Blast radius: completion-bell deduplication, Mic Flow completion identity, local recovery overwrite, Quick Read result/idempotency ownership, and server attempt uniqueness.
+- Resolution: QA7-D-R3B adds a canonical ref-backed pending/consumed lifecycle. Owner-preparation failure and permission denial leave pending identities unchanged; permission success consumes once; a later start rotates a consumed identity once. Existing retry, delete, Hold-to-Cancel, and Take Two preallocation paths create pending replacements and do not rotate twice.
+- Guardrail: a pending TakeIdentity may be consumed by exactly one recording attempt. Same-take retries, playback, recovery, auth conversion, persistence retry, and Quick Read retry preserve it; every later genuine recording receives a fresh identity. Parent-orchestration tests must cover both normal and retained-take start paths.
+
+## 2026-09-14 — Countdown cancellation finalized a never-started web recorder
+
+- Symptom: after Keep Saved Take and Start, cancelling during the countdown left one blob URL in the browser audio proof before the saved Drop was reopened.
+- Root cause: `discardTransientRecording()` called `finalize()` while the recorder phase was only `prepared`; Expo web's `stop()` creates a blob URL even though recording never started, and cleanup then revoked that transient URL.
+- Category: client recorder/blob lifecycle.
+- Blast radius: countdown cancellation and unmount could create unnecessary web blobs; retained playback itself was not revoked prematurely.
+- Resolution: prepared cancellation now resets the recorder lifecycle without finalizing. Blob revocation is centralized and idempotent, and retained web blobs are released on unmount only after playback cleanup.
+- Evidence: Playwright audio proof passes 8/8; recorder TSX suites pass 20/20; native Release logs show one MP3 playback per controlled completion identity on both simulators.
+- Guardrail: never finalize a prepared-but-never-started recorder; revoke replaced, abandoned, failed, deleted, and unmounted blob URLs exactly once after any active player releases them.
+
+## 2026-09-14 — Dismissing a completed take left duration selection on a completed machine
+
+- Symptom: after completing a Drop, using Play/Pause, closing the completion view, choosing New Drop, and selecting a different duration, the UI entered `LOCAL RECOVERY` with `Invalid recording transition: completed -> SELECT_DURATION`.
+- Root cause: `closeCompletedTake()` changed only presentation state while the recording machine remained `completed`; the duration control then exposed and dispatched an event that was illegal for the underlying machine state.
+- Resolution: `closeCompletedTake()` now stops playback, checks the live machine state, and dispatches the existing state-only `completed -> idle` `DELETE_RECORDING` transition before exposing duration selection. The transition does not delete the persisted retained take, revoke its audio, clean up the recorder URI, rotate identity, or invoke backend work.
+- Evidence: the exact saved-take restart path passed in Playwright and on Release iPhone 16e and iPad Pro 13-inch (M5) simulators. Each device completed distinct 30-second and 60-second identities, retained Saved Drop playback remained available, and reopening the Saved Drop produced no bell replay.
+- Guardrail: presentation state must never expose controls whose events are illegal for the underlying recording-machine state; guard completion retirement against repeated dismissal and keep retained-take ownership separate from transient machine state.
+
+## 2026-09-16 — QA7 final reconciliation
+
+- Status: QA7 is a CONDITIONAL PASS based on the accepted native/manual and automated evidence recorded through QA7-D-R7F.
+- Accepted evidence: copy, the exact 20-prompt catalog, mirrored PromptCard quotes, the normal-flow closing-quote repair, recognizable settled uppercase `I` in portrait and landscape, completion animation and Reduced Motion, one bell per distinct identity with no reopen replay, cold anonymous-owner timeout/single-flight repair, pending/consumed TakeIdentity rotation, recorder blob cleanup, saved-take completion-dismissal retirement, genuine 1,500ms Hold to Cancel, iPhone/iPad rotation with retained playback, and scrollable compact-landscape content.
+- Superseded findings: R6 landscape “clipping” was offscreen content reachable by native scrolling; R7A’s nested-flex diagnosis was disproven; R7B was fully rolled back; and R8A found no prompt-data or settled-render loss for uppercase `I`. These remain historical findings, not current defects.
+- External caveats: physical-device VoiceOver, physical-device silent-mode/audio-session behavior, and live OTP without an authorized mailbox remain pending. The development Metro audio-path defect remains separate; embedded Release assets passed.
