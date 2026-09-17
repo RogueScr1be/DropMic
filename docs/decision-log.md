@@ -639,3 +639,13 @@ R6 landscape “clipping” was offscreen content reachable by native scrolling,
 ### External caveats
 
 Physical-device VoiceOver, physical-device silent-mode/audio-session behavior, and live OTP without an authorized mailbox remain pending. The development Metro audio-path defect remains separate from embedded Release-asset acceptance. QA7 does not claim full physical-device acceptance.
+
+## 2026-09-17 — QA7-I silent-mode checkpoint
+
+### Decision
+
+Keep the QA7-I audio-session repair as a source-control checkpoint while deferring physical iPhone mute-switch acceptance to the release gate. Expo audio mode is process-global, so automatic Solari and completion sounds use `playsInSilentMode: false`, explicit Saved Drop playback uses `playsInSilentMode: true`, and recording uses its required recording mode. Audio-mode operations are serialized and automatic mode is restored after recording/playback boundaries and failures.
+
+### Acceptance
+
+Focused QA7-I tests, affected TSX suites, full Jest, typecheck, lint, web export, and Playwright responsive/audio proof passed. No physical iPhone was connected for the silent-mode matrix, so physical behavior is not recorded as passed. VoiceOver is waived from the current demo gate because the observed problem was device-level; authorized live OTP remains a release check. No deployment is authorized.

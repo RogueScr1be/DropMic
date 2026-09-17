@@ -1,7 +1,13 @@
 import { act, create } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { Platform } from 'react-native';
+import { setAudioModeAsync } from 'expo-audio';
 
+import {
+  AUTOMATIC_AUDIO_MODE,
+  EXPLICIT_PLAYBACK_AUDIO_MODE,
+  RECORDING_AUDIO_MODE,
+} from '@/features/audio/audio-mode';
 import { useLocalAudioRecorder } from './use-local-audio-recorder';
 
 const mockRecorder = {
@@ -29,6 +35,7 @@ jest.mock('expo-audio', () => ({
   getRecordingPermissionsAsync: jest.fn(() => Promise.resolve({ granted: true })),
   requestRecordingPermissionsAsync: jest.fn(() => Promise.resolve({ granted: true })),
   setAudioModeAsync: jest.fn(() => Promise.resolve()),
+  setIsAudioActiveAsync: jest.fn(() => Promise.resolve()),
   useAudioPlayer: jest.fn(() => mockPlayer),
   useAudioPlayerStatus: jest.fn(() => ({ playing: false })),
   useAudioRecorder: jest.fn(() => mockRecorder),
@@ -76,6 +83,8 @@ describe('useLocalAudioRecorder', () => {
     expect(mockRecorder.record).toHaveBeenCalledTimes(2);
     expect(mockRecorder.pause).toHaveBeenCalledTimes(1);
     expect(mockRecorder.stop).toHaveBeenCalledTimes(1);
+    expect(setAudioModeAsync).toHaveBeenNthCalledWith(1, RECORDING_AUDIO_MODE);
+    expect(setAudioModeAsync).toHaveBeenLastCalledWith(AUTOMATIC_AUDIO_MODE);
     expect(await api.finalize()).toBe('file:///drop.m4a');
     expect(mockRecorder.prepareToRecordAsync).toHaveBeenCalledTimes(1);
     expect(mockRecorder.stop).toHaveBeenCalledTimes(1);
@@ -99,6 +108,7 @@ describe('useLocalAudioRecorder', () => {
     expect(mockPlayer.replace).toHaveBeenCalledWith('file:///drop.m4a');
     expect(mockPlayer.seekTo).toHaveBeenCalledWith(0);
     expect(mockPlayer.play).toHaveBeenCalledTimes(1);
+    expect(setAudioModeAsync).toHaveBeenCalledWith(EXPLICIT_PLAYBACK_AUDIO_MODE);
   });
 
   it('stops and releases retained playback before returning to the board', async () => {
@@ -117,6 +127,26 @@ describe('useLocalAudioRecorder', () => {
     expect(mockPlayer.remove).toHaveBeenCalledTimes(1);
     expect(mockPlayer.replace).toHaveBeenCalledWith('file:///drop.m4a');
     expect(mockPlayer.replace).not.toHaveBeenCalledWith(null);
+    expect(setAudioModeAsync).toHaveBeenCalledWith(EXPLICIT_PLAYBACK_AUDIO_MODE);
+    expect(setAudioModeAsync).toHaveBeenLastCalledWith(AUTOMATIC_AUDIO_MODE);
+  });
+
+  it('does not block finalization when automatic-mode restoration fails', async () => {
+    jest.mocked(setAudioModeAsync).mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('mode restore failed'));
+    let api!: ReturnType<typeof useLocalAudioRecorder>;
+    act(() => {
+      create(<Harness expose={(nextApi) => { api = nextApi; }} />);
+    });
+
+    let uri: string | null = null;
+    await act(async () => {
+      await api.prepare();
+      await api.start();
+      uri = await api.finalize();
+    });
+
+    expect(uri).toBe('file:///drop.m4a');
+    expect(setAudioModeAsync).toHaveBeenLastCalledWith(AUTOMATIC_AUDIO_MODE);
   });
 
   it('stops retained playback before deleting the local file', async () => {

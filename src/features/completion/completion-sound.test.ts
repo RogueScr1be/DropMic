@@ -1,13 +1,14 @@
-import { describe, expect, it, jest } from '@jest/globals';
+import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { setAudioModeAsync } from 'expo-audio';
+
+import { AUTOMATIC_AUDIO_MODE } from '@/features/audio/audio-mode';
+import { createCompletionBellController } from './completion-sound';
 
 jest.mock('expo-audio', () => ({
-  setAudioModeAsync: jest.fn(),
-  setIsAudioActiveAsync: jest.fn(),
+  setAudioModeAsync: jest.fn(() => Promise.resolve()),
+  setIsAudioActiveAsync: jest.fn(() => Promise.resolve()),
   useAudioPlayer: jest.fn(),
 }));
-
-// eslint-disable-next-line import/first
-import { createCompletionBellController } from './completion-sound';
 
 function createPlayer() {
   return {
@@ -19,6 +20,22 @@ function createPlayer() {
 }
 
 describe('completion bell', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('configures automatic audio before the default bell playback', async () => {
+    const player = createPlayer();
+    const controller = createCompletionBellController(player);
+
+    await expect(controller.playOnce('attempt-automatic-mode')).resolves.toBe(true);
+
+    expect(setAudioModeAsync).toHaveBeenCalledWith(AUTOMATIC_AUDIO_MODE);
+    expect((setAudioModeAsync as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(
+      player.play.mock.invocationCallOrder[0],
+    );
+  });
+
   it('plays once for a newly persisted attempt and ignores duplicate callbacks', async () => {
     const player = createPlayer();
     const prepareAudioMode = jest.fn<() => Promise<void>>().mockResolvedValue(undefined);

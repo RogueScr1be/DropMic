@@ -1,28 +1,10 @@
-import { setAudioModeAsync, setIsAudioActiveAsync, useAudioPlayer } from 'expo-audio';
+import { useAudioPlayer } from 'expo-audio';
 import { useCallback, useEffect, useRef } from 'react';
 import { Platform, Vibration } from 'react-native';
+import { configureAutomaticAudioMode } from '@/features/audio/audio-mode';
 
 const CLACK_SOUND_SOURCE = require('../../../assets/audio/solari-board-sound.m4a');
 const CLACK_DURATION_MS = 950;
-let audioModePromise: Promise<void> | null = null;
-
-function ensureSolariAudioMode() {
-  audioModePromise ??= setIsAudioActiveAsync(true)
-    .then(() =>
-      setAudioModeAsync({
-        allowsRecording: false,
-        interruptionMode: 'mixWithOthers',
-        playsInSilentMode: true,
-        shouldPlayInBackground: false,
-        shouldRouteThroughEarpiece: false,
-      }),
-    )
-    .catch(() => {
-      audioModePromise = null;
-    });
-  return audioModePromise;
-}
-
 export function tapSolariHaptic() {
   if (Platform.OS !== 'web') {
     Vibration.vibrate(Platform.OS === 'android' ? 8 : 1);
@@ -52,7 +34,7 @@ export function useClackSound(enabled: boolean) {
     }
 
     stopClack();
-    void ensureSolariAudioMode()
+    void configureAutomaticAudioMode()
       .then(() => player.seekTo(0).catch(() => undefined))
       .then(() => {
         player.play();

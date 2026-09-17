@@ -3,7 +3,6 @@ import { Platform } from 'react-native';
 import {
   getRecordingPermissionsAsync,
   requestRecordingPermissionsAsync,
-  setAudioModeAsync,
   useAudioPlayer,
   useAudioPlayerStatus,
   useAudioRecorder,
@@ -11,6 +10,11 @@ import {
   RecordingPresets,
 } from 'expo-audio';
 import { File } from 'expo-file-system';
+import {
+  configureAutomaticAudioMode,
+  configureExplicitPlaybackAudioMode,
+  configureRecordingAudioMode,
+} from '@/features/audio/audio-mode';
 import { detectWebRecordingMimeType } from './web-recording-format';
 
 const recorderOptions = {
@@ -64,13 +68,15 @@ export function useLocalAudioRecorder() {
     finalizedUri.current = null;
     finalizePromise.current = null;
     discardPromise.current = null;
-    await setAudioModeAsync({
-      allowsRecording: true,
-      allowsBackgroundRecording: false,
-      playsInSilentMode: true,
-    });
-    await recorder.prepareToRecordAsync();
-    recorderPhase.current = 'prepared';
+    try {
+      await configureRecordingAudioMode();
+      await recorder.prepareToRecordAsync();
+      recorderPhase.current = 'prepared';
+    } catch (prepareError) {
+      recorderPhase.current = 'idle';
+      await configureAutomaticAudioMode().catch(() => undefined);
+      throw prepareError;
+    }
   }, [recorder]);
 
   const start = useCallback(async () => {
@@ -106,14 +112,19 @@ export function useLocalAudioRecorder() {
     }
 
     finalizePromise.current = (async () => {
+      let recorderStopped = false;
       if (recorderPhase.current === 'prepared') {
         recorder.record();
         recorderPhase.current = 'recording';
       }
       if (recorderPhase.current === 'recording' || recorderPhase.current === 'paused') {
         await recorder.stop();
+        recorderStopped = true;
         recorderPhase.current = 'finalized';
         finalizedUri.current = recorder.uri;
+      }
+      if (recorderStopped) {
+        await configureAutomaticAudioMode().catch(() => undefined);
       }
       return finalizedUri.current ?? recorder.uri;
     })();
@@ -127,13 +138,19 @@ export function useLocalAudioRecorder() {
 
   const play = useCallback(
     async (uri: string) => {
-      if (lastPlayerUri.current !== uri) {
-        player.replace(uri);
-        lastPlayerUri.current = uri;
+      try {
+        await configureExplicitPlaybackAudioMode();
+        if (lastPlayerUri.current !== uri) {
+          player.replace(uri);
+          lastPlayerUri.current = uri;
+        }
+        await player.seekTo(0);
+        player.play();
+        setIsPlaybackPlaying(true);
+      } catch (playbackError) {
+        await configureAutomaticAudioMode().catch(() => undefined);
+        throw playbackError;
       }
-      await player.seekTo(0);
-      player.play();
-      setIsPlaybackPlaying(true);
     },
     [player],
   );
@@ -144,6 +161,7 @@ export function useLocalAudioRecorder() {
     }
     player.pause();
     setIsPlaybackPlaying(false);
+    await configureAutomaticAudioMode().catch(() => undefined);
   }, [player]);
 
   const stopPlayback = useCallback(async () => {
@@ -157,6 +175,7 @@ export function useLocalAudioRecorder() {
       player.remove();
       lastPlayerUri.current = null;
       setError(null);
+      await configureAutomaticAudioMode().catch(() => undefined);
     } catch {
       throw new Error('Unable to stop saved take playback. Your saved take is still available.');
     }
@@ -208,6 +227,9 @@ export function useLocalAudioRecorder() {
     discardPromise.current = (async () => {
       const wasPrepared = recorderPhase.current === 'prepared';
       const uri = wasPrepared ? null : await finalize();
+      if (wasPrepared) {
+        await configureAutomaticAudioMode().catch(() => undefined);
+      }
       if (uri && !retainedUris.current.has(uri)) {
         await deleteRecording(uri);
       }

@@ -28,3 +28,9 @@ Historical R6/R7 findings are superseded: R6 landscape “clipping” was offscr
 The parent now distinguishes pending from consumed recording identities. Owner-preparation failure and microphone permission denial preserve a pending identity. Permission success consumes it before countdown. Any later genuine recording start rotates a consumed identity once, while existing Retry Drop, Delete, successful Hold-to-Cancel, and Take Two paths retain their pending replacement identities without a second rotation. Saved Drop recovery restores the persisted identity as consumed, and same-take persistence/Quick Read/auth/playback paths preserve it.
 
 Focused and full automated tests pass. Release native two-completion ID/bell evidence remains required on the iPhone 16e and iPad Pro 13-inch M5; the Metro asset and owner-preparation issues remain separate gates.
+
+## QA7-I silent-mode checkpoint
+
+Expo audio mode is process-global. Automatic Solari and completion sounds now request `playsInSilentMode: false`; explicit Saved Drop playback requests `playsInSilentMode: true`; recording uses its required recording mode. Audio-mode operations are serialized, and automatic mode is restored after recording/playback boundaries and failures while nonessential audio failures remain non-blocking.
+
+Focused QA7-I audio-mode tests, affected TSX suites, full Jest, typecheck, lint, web export, and Playwright responsive/audio proof passed. Physical mute-switch validation remains deferred because no connected physical iPhone was available and must not be described as passed. This is a conditional source-control checkpoint, not full physical acceptance. VoiceOver is waived from the current demo gate because the observed problem was device-level; authorized live OTP remains a release check, and no deployment is authorized.

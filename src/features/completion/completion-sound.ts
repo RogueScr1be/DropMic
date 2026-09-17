@@ -1,5 +1,6 @@
-import { setAudioModeAsync, setIsAudioActiveAsync, useAudioPlayer } from 'expo-audio';
+import { useAudioPlayer } from 'expo-audio';
 import { useCallback, useEffect, useMemo } from 'react';
+import { configureAutomaticAudioMode } from '@/features/audio/audio-mode';
 
 export const COMPLETION_BELL_SOURCE = require('../../../assets/audio/completion bell.mp3');
 
@@ -12,26 +13,9 @@ export type CompletionBellPlayer = {
 
 type CompletionAudioMode = () => Promise<void>;
 
-let audioModePromise: Promise<void> | null = null;
-
-function ensureCompletionAudioMode() {
-  audioModePromise ??= setIsAudioActiveAsync(true)
-    .then(() => setAudioModeAsync({
-      allowsRecording: false,
-      interruptionMode: 'mixWithOthers',
-      playsInSilentMode: true,
-      shouldPlayInBackground: false,
-      shouldRouteThroughEarpiece: false,
-    }))
-    .catch(() => {
-      audioModePromise = null;
-    });
-  return audioModePromise;
-}
-
 export function createCompletionBellController(
   player: CompletionBellPlayer,
-  prepareAudioMode: CompletionAudioMode = ensureCompletionAudioMode,
+  prepareAudioMode: CompletionAudioMode = configureAutomaticAudioMode,
 ) {
   const playedAttemptIds = new Set<string>();
   let disposed = false;
