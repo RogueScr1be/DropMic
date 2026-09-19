@@ -6,6 +6,10 @@ import {
   type QuickReadResult,
 } from '../_shared/quick-read-contract.ts';
 import {
+  buildFeedbackUserPrompt,
+  FEEDBACK_SYSTEM_PROMPT,
+} from '../_shared/quick-read-prompt.ts';
+import {
   createDeterministicTestAdapters,
   ProviderAdapterError,
   type FeedbackAdapter,
@@ -165,12 +169,11 @@ async function analyzeTranscript(transcript: string, apiKey: string): Promise<Qu
       messages: [
         {
           role: 'system',
-          content:
-            'You are MicDrop Quick Read. Evaluate a short spoken response for clarity, structure, specificity, and concision. Return only the requested structured object. Be concise, practical, and encouraging. Do not diagnose personality, emotion, identity, politics, or sensitive traits.',
+          content: FEEDBACK_SYSTEM_PROMPT,
         },
         {
           role: 'user',
-          content: `Evaluate this transcript as a speaking practice attempt. Scores must be 0 to 1. Strength, improvement, and nextDrill must each be one short actionable paragraph.\n\nTranscript:\n${transcript}`,
+          content: buildFeedbackUserPrompt(transcript),
         },
       ],
       response_format: {
