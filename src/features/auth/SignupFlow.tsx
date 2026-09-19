@@ -10,6 +10,8 @@ import {
   claimUnclaimedAttempt,
   deleteAccount,
   getSession,
+  isDevTestLoginEnabled,
+  signInWithDevTestAccount,
   signOut,
   verifyEmailConversion,
   verifyEmailSignIn,
@@ -21,6 +23,7 @@ export function SignupFlow({
   mode = 'conversion',
   onAttemptClaimed,
   onClose,
+  onDeveloperLogin,
   onSignedOut,
   visible,
 }: {
@@ -28,6 +31,7 @@ export function SignupFlow({
   mode?: 'conversion' | 'sign-in';
   onAttemptClaimed?: (attemptId: string) => void;
   onClose: () => void;
+  onDeveloperLogin?: () => void;
   onSignedOut: () => void;
   visible: boolean;
 }) {
@@ -39,6 +43,10 @@ export function SignupFlow({
   const reset = useAuthFlowStore((state) => state.reset);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [devLoginOpen, setDevLoginOpen] = useState(false);
+  const [devEmail, setDevEmail] = useState('');
+  const [devPassword, setDevPassword] = useState('');
+  const devLoginInFlight = useRef(false);
   const [deleteConfirmation, setDeleteConfirmation] = useState(false);
   const isPostRecordingConversion = Boolean(attempt);
   const claimedAttemptRef = useRef<string | null>(null);
@@ -68,8 +76,16 @@ export function SignupFlow({
   const close = () => {
     reset();
     setError(null);
+    setDevLoginOpen(false);
+    setDevEmail('');
+    setDevPassword('');
     onClose();
   };
+
+  useEffect(() => () => {
+    setDevEmail('');
+    setDevPassword('');
+  }, []);
 
   const run = async (action: () => Promise<void>) => {
     setBusy(true);
@@ -104,6 +120,28 @@ export function SignupFlow({
       setOtp('');
       await finishSetup();
     });
+
+  const submitDevLogin = async () => {
+    if (busy || devLoginInFlight.current) {
+      return;
+    }
+    devLoginInFlight.current = true;
+    setBusy(true);
+    setError(null);
+    try {
+      await signInWithDevTestAccount(devEmail, devPassword);
+      setDevEmail('');
+      setDevPassword('');
+      onDeveloperLogin?.();
+      close();
+    } catch (loginError) {
+      setError(loginError instanceof AuthServiceError ? loginError.message : 'Development test login failed.');
+    } finally {
+      setDevPassword('');
+      setBusy(false);
+      devLoginInFlight.current = false;
+    }
+  };
 
   const [otp, setOtp] = useState('');
 
@@ -182,11 +220,25 @@ export function SignupFlow({
 
           {(activeStep === 'otp' || activeStep === 'sign_in_otp') && (
             <>
-              <Text accessibilityRole="header" style={styles.title}>Enter your code.</Text>
-              <Text style={styles.body}>We sent a one-time code to {email}. Your local take stays recoverable if the code expires.</Text>
-              <TextInput autoCapitalize="none" autoCorrect={false} keyboardType="number-pad" onChangeText={setOtp} placeholder="123456" style={styles.input} value={otp} />
-              <FlowButton disabled={busy || otp.trim().length < 4} label={busy ? 'Checking code…' : 'Verify code'} onPress={verifyCode} />
-              <FlowButton label="Back" onPress={() => setStep(activeStep === 'otp' ? 'email' : 'sign_in_email')} secondary />
+              {!devLoginOpen ? (
+                <>
+                  <Text accessibilityRole="header" style={styles.title}>Enter your code.</Text>
+                  <Text style={styles.body}>We sent a one-time code to {email}. Your local take stays recoverable if the code expires.</Text>
+                  <TextInput autoCapitalize="none" autoCorrect={false} keyboardType="number-pad" onChangeText={setOtp} placeholder="123456" style={styles.input} value={otp} />
+                  <FlowButton disabled={busy || otp.trim().length < 4} label={busy ? 'Checking code…' : 'Verify code'} onPress={verifyCode} />
+                  {isDevTestLoginEnabled() && <FlowButton label="Use Dev Test Account" onPress={() => setDevLoginOpen(true)} secondary />}
+                  <FlowButton label="Back" onPress={() => setStep(activeStep === 'otp' ? 'email' : 'sign_in_email')} secondary />
+                </>
+              ) : (
+                <>
+                  <Text accessibilityRole="header" style={styles.title}>Development test account.</Text>
+                  <Text style={styles.body}>Development only — unavailable in Release builds.</Text>
+                  <TextInput accessibilityLabel="Development test account email" autoCapitalize="none" autoComplete="email" autoCorrect={false} keyboardType="email-address" onChangeText={setDevEmail} placeholder="Email" style={styles.input} value={devEmail} />
+                  <TextInput accessibilityLabel="Development test account password" autoCapitalize="none" autoCorrect={false} onChangeText={setDevPassword} placeholder="Password" secureTextEntry style={styles.input} value={devPassword} />
+                  <FlowButton disabled={busy || devEmail.trim().length === 0 || devPassword.length === 0} label={busy ? 'Signing in…' : 'Sign In for Testing'} onPress={() => void submitDevLogin()} />
+                  <FlowButton label="Back to Code" onPress={() => { setDevLoginOpen(false); setDevEmail(''); setDevPassword(''); setError(null); }} secondary />
+                </>
+              )}
             </>
           )}
 

@@ -149,6 +149,33 @@ export async function verifyEmailSignIn(email: string, token: string) {
   return result.data.session;
 }
 
+export function isDevTestLoginEnabled() {
+  const devTestLoginEnabled =
+    __DEV__ &&
+    process.env.EXPO_PUBLIC_DROPMIC_DEV_TEST_LOGIN === '1';
+  return devTestLoginEnabled;
+}
+
+export async function signInWithDevTestAccount(email: string, password: string) {
+  if (!isDevTestLoginEnabled()) {
+    throw new AuthServiceError('Development test login is unavailable.');
+  }
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!normalizedEmail.includes('@') || password.length === 0) {
+    throw new AuthServiceError('Enter the development test account credentials.');
+  }
+  const client = requireClient();
+  const result = await client.auth.signInWithPassword({ email: normalizedEmail, password });
+  if (result.error) {
+    throw new AuthServiceError('Development test login failed. Check the credentials.');
+  }
+  if (!result.data.session || result.data.session.user.is_anonymous !== false) {
+    throw new AuthServiceError('The development test account must be a permanent account.');
+  }
+  await clearPendingAuth();
+  return result.data.session;
+}
+
 export async function saveOnboarding(input: OnboardingInput) {
   if (!input.ageGateConfirmed || input.goals.length === 0 || input.blockers.length === 0) {
     throw new AuthServiceError('Choose your age confirmation, at least one goal, and one blocker.');

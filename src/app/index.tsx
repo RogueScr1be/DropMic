@@ -118,6 +118,7 @@ export default function AudioProofScreen() {
   const [completedTakeHidden, setCompletedTakeHidden] = useState(false);
   const [retainedTakeStartPromptVisible, setRetainedTakeStartPromptVisible] = useState(false);
   const [retainedTakeHydrating, setRetainedTakeHydrating] = useState(true);
+  const [requiresNewDropAfterDevLogin, setRequiresNewDropAfterDevLogin] = useState(false);
   const playCompletionBell = useCompletionBell();
   const stopInFlight = useRef(false);
   const completionInFlight = useRef(false);
@@ -892,6 +893,7 @@ export default function AudioProofScreen() {
           .start()
           .then(() => {
             if (operationId === operationGeneration.current && useRecordingStore.getState().state === 'countdown') {
+              setRequiresNewDropAfterDevLogin(false);
               dispatch({ type: 'COUNTDOWN_COMPLETE' });
             } else {
               void audio.discardTransientRecording().catch(() => undefined);
@@ -1020,6 +1022,10 @@ export default function AudioProofScreen() {
   }, [beginNewTake, chooseNewTopic, deleteRetainedCompletedTake, dispatch, recordingUri]);
 
   const openQuickRead = useCallback(async () => {
+    if (requiresNewDropAfterDevLogin) {
+      setActionError('Create a new Drop before starting a Quick Read.');
+      return;
+    }
     if (micFlowSavePromptVisible) {
       setActionError('Choose whether to use a Mic Save before starting Quick Read.');
       return;
@@ -1057,7 +1063,14 @@ export default function AudioProofScreen() {
       setIsSettingsVisible(false);
       setIsAuthFlowVisible(true);
     }
-  }, [currentAttempt, micFlowSavePromptVisible, serverAttemptId]);
+  }, [currentAttempt, micFlowSavePromptVisible, requiresNewDropAfterDevLogin, serverAttemptId]);
+
+  const handleDeveloperLogin = useCallback(() => {
+    setRequiresNewDropAfterDevLogin(true);
+    if (useRecordingStore.getState().state === 'completed') {
+      void closeCompletedTake();
+    }
+  }, [closeCompletedTake]);
 
   const retainedTakeCard = recoveryPresentation === 'retained-take' ? (
     <RetainedTakeCard
@@ -1271,6 +1284,7 @@ export default function AudioProofScreen() {
         attempt={currentAttempt ?? recoveryAttempt}
         mode={authFlowMode}
         onAttemptClaimed={setServerAttemptId}
+        onDeveloperLogin={handleDeveloperLogin}
         onClose={() => {
           setIsAuthFlowVisible(false);
           void refreshRecoveryAttempt();

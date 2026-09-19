@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 /* eslint-disable import/first */
 
@@ -7,6 +7,7 @@ const mockSupabase: any = {
   auth: {
     getSession: jest.fn(),
     signInAnonymously: jest.fn(),
+    signInWithPassword: jest.fn(),
     updateUser: jest.fn(),
     setSession: jest.fn(),
     verifyOtp: jest.fn(),
@@ -31,6 +32,7 @@ describe('auth service', () => {
     await AsyncStorage.clear();
     mockSupabase.auth.getSession.mockResolvedValue({ data: { session: mockSession }, error: null });
     mockSupabase.auth.signInAnonymously.mockResolvedValue({ data: { session: mockSession }, error: null });
+    mockSupabase.auth.signInWithPassword.mockResolvedValue({ data: { session: { ...mockSession, user: { ...mockSession.user, is_anonymous: false } } }, error: null });
     mockSupabase.auth.updateUser.mockResolvedValue({ data: { user: mockSession.user }, error: null });
     mockSupabase.auth.setSession.mockResolvedValue({ data: { session: mockSession }, error: null });
     mockSupabase.auth.verifyOtp.mockResolvedValue({ data: { session: mockSession }, error: null });
@@ -169,5 +171,60 @@ describe('auth service', () => {
     expect(mockSupabase.auth.signInWithOtp).toHaveBeenCalledWith({ email: 'person@example.com', options: { shouldCreateUser: false } });
     expect(mockSupabase.rpc).toHaveBeenCalledWith('delete_my_account');
     expect(mockSupabase.auth.signOut).toHaveBeenCalledTimes(2);
+  });
+
+  describe('development test login', () => {
+    const originalDevFlag = process.env.EXPO_PUBLIC_DROPMIC_DEV_TEST_LOGIN;
+    const originalDev = (globalThis as { __DEV__?: boolean }).__DEV__;
+
+    beforeEach(() => {
+      Object.defineProperty(globalThis, '__DEV__', { configurable: true, value: true, writable: true });
+      delete process.env.EXPO_PUBLIC_DROPMIC_DEV_TEST_LOGIN;
+    });
+
+    afterEach(() => {
+      if (originalDevFlag === undefined) {
+        delete process.env.EXPO_PUBLIC_DROPMIC_DEV_TEST_LOGIN;
+      } else {
+        process.env.EXPO_PUBLIC_DROPMIC_DEV_TEST_LOGIN = originalDevFlag;
+      }
+      Object.defineProperty(globalThis, '__DEV__', { configurable: true, value: originalDev, writable: true });
+    });
+
+    it('requires both the development runtime and explicit flag', async () => {
+      expect(authService.isDevTestLoginEnabled()).toBe(false);
+      process.env.EXPO_PUBLIC_DROPMIC_DEV_TEST_LOGIN = '0';
+      expect(authService.isDevTestLoginEnabled()).toBe(false);
+      process.env.EXPO_PUBLIC_DROPMIC_DEV_TEST_LOGIN = '1';
+      expect(authService.isDevTestLoginEnabled()).toBe(true);
+      Object.defineProperty(globalThis, '__DEV__', { configurable: true, value: false, writable: true });
+      expect(authService.isDevTestLoginEnabled()).toBe(false);
+      await expect(authService.signInWithDevTestAccount('person@example.com', 'owner-input')).rejects.toThrow('unavailable');
+      expect(mockSupabase.auth.signInWithPassword).not.toHaveBeenCalled();
+    });
+
+    it('signs in only to a permanent account and clears pending OTP state', async () => {
+      process.env.EXPO_PUBLIC_DROPMIC_DEV_TEST_LOGIN = '1';
+      await savePendingAuth({ intent: 'existing-sign-in', email: 'pending@example.com', createdAt: 1000 });
+      await expect(authService.signInWithDevTestAccount(' Person@Example.com ', 'owner-input')).resolves.toMatchObject({ user: { is_anonymous: false } });
+      expect(mockSupabase.auth.signInWithPassword).toHaveBeenCalledWith({ email: 'person@example.com', password: 'owner-input' });
+      await expect(getPendingAuth()).resolves.toBeNull();
+    });
+
+    it('translates failures, preserves the current session, and rejects anonymous results', async () => {
+      process.env.EXPO_PUBLIC_DROPMIC_DEV_TEST_LOGIN = '1';
+      mockSupabase.auth.signInWithPassword.mockResolvedValueOnce({ data: { session: null }, error: { message: 'provider detail' } });
+      await expect(authService.signInWithDevTestAccount('person@example.com', 'owner-input')).rejects.toThrow('Check the credentials');
+      expect(mockSupabase.auth.signOut).not.toHaveBeenCalled();
+      mockSupabase.auth.signInWithPassword.mockResolvedValueOnce({ data: { session: { ...mockSession, user: { ...mockSession.user, is_anonymous: true } } }, error: null });
+      await expect(authService.signInWithDevTestAccount('person@example.com', 'owner-input')).rejects.toThrow('permanent account');
+    });
+
+    it('does not call signup or create a user', async () => {
+      process.env.EXPO_PUBLIC_DROPMIC_DEV_TEST_LOGIN = '1';
+      await authService.signInWithDevTestAccount('person@example.com', 'owner-input');
+      expect(mockSupabase.auth.signInWithPassword).toHaveBeenCalledTimes(1);
+      expect(mockSupabase.auth.signUp).toBeUndefined();
+    });
   });
 });
