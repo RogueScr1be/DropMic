@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { isCurrentTake } from './attempt-identity';
+import { calculateDropScore } from './drop-score';
 import { startQuickRead } from './quick-read-service';
 import { compareTakeTwo } from './take-two-service';
 import type { TakeTwoComparison } from '../../../supabase/functions/_shared/take-two';
@@ -225,15 +226,16 @@ export function QuickReadFlow({
             <>
               <Text accessibilityRole="header" style={styles.title}>Here’s your Quick Read.</Text>
               <Text style={styles.body}>A focused signal for the next take—not a verdict.</Text>
+              <SpeakerVibeCard speakerVibe={currentResult.speakerVibe} />
               <View accessibilityLabel="Quick Read scores" style={styles.scoreGrid}>
-                <Score label="Clarity" value={currentResult.clarity} />
-                <Score label="Structure" value={currentResult.structure} />
-                <Score label="Specificity" value={currentResult.specificity} />
-                <Score label="Concision" value={currentResult.concision} />
+                <Score label="Drop Score" value={calculateDropScore(currentResult)} />
+                <Score label="Clarity" value={Math.round(currentResult.clarity * 100)} />
+                <Score label="Structure" value={Math.round(currentResult.structure * 100)} locked={!plusEligible} />
+                <Score label="Concision" value={Math.round(currentResult.concision * 100)} locked={!plusEligible} />
               </View>
-              <FeedbackCard label="ONE STRENGTH" text={currentResult.strength} />
-              <FeedbackCard label="ONE FIX" text={currentResult.improvement} />
-              <FeedbackCard label="NEXT DRILL" text={currentResult.nextDrill} />
+              <FeedbackCard label="WHERE YOU SHINE" text={currentResult.strength} />
+              <FeedbackCard label="WHERE YOU NEED WORK" text={currentResult.improvement} />
+              <FeedbackCard label="DROP DRILL" text={currentResult.nextDrill} />
               <Text style={styles.retentionNote}>Cloud audio was deleted after analysis. Transcript retention is limited to 30 days.</Text>
               {!takeTwoBaselineRunId && plusEligible && currentRunId && (
                 <View accessibilityLabel="Take Two invitation" style={styles.takeTwoCard} testID="take-two-cta">
@@ -327,11 +329,26 @@ function MetricRow({ label, value }: { label: string; value: number }) {
   );
 }
 
-function Score({ label, value }: { label: string; value: number }) {
+function SpeakerVibeCard({ speakerVibe }: { speakerVibe?: QuickReadResult['speakerVibe'] }) {
   return (
-    <View accessibilityLabel={label + ': ' + Math.round(value * 100) + ' percent'} style={styles.score}>
-      <Text style={styles.scoreValue}>{Math.round(value * 100)}</Text>
-      <Text style={styles.scoreUnit}>%</Text>
+    <View accessibilityLabel={`Speaker Vibe: ${speakerVibe ?? 'not available for this saved result'}`} style={styles.vibeCard}>
+      <Text style={styles.vibeLabel}>SPEAKER VIBE</Text>
+      <Text style={styles.vibeValue}>{speakerVibe ?? 'Not available for this saved result.'}</Text>
+    </View>
+  );
+}
+
+function Score({ label, value, locked = false }: { label: string; value: number; locked?: boolean }) {
+  return (
+    <View accessibilityLabel={locked ? `${label}: locked for free access` : `${label}: ${value} percent`} style={[styles.score, locked && styles.lockedScore]}>
+      {locked ? (
+        <Text style={styles.lockedValue}>Locked</Text>
+      ) : (
+        <View style={styles.scoreValueRow}>
+          <Text style={styles.scoreValue}>{value}</Text>
+          <Text style={styles.scoreUnit}>%</Text>
+        </View>
+      )}
       <Text style={styles.scoreLabel}>{label}</Text>
     </View>
   );
@@ -370,12 +387,18 @@ const styles = StyleSheet.create({
   center: { gap: 16, paddingVertical: 72 },
   scoreGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   score: { backgroundColor: '#e7dccb', borderColor: '#c4b5a2', borderRadius: 12, borderWidth: 1, flexGrow: 1, minWidth: '45%', padding: 14 },
+  lockedScore: { backgroundColor: '#f4ebdd' },
+  scoreValueRow: { alignItems: 'baseline', flexDirection: 'row', gap: 4 },
   scoreValue: { color: '#18332d', fontFamily: 'Georgia', fontSize: 30, fontWeight: '700' },
-  scoreUnit: { color: '#799087', fontSize: 11, fontWeight: '900', marginTop: -8 },
+  scoreUnit: { color: '#799087', fontSize: 14, fontWeight: '900' },
+  lockedValue: { color: '#799087', fontSize: 18, fontWeight: '900' },
   scoreLabel: { color: '#526c63', fontSize: 12, fontWeight: '800', marginTop: 8 },
+  vibeCard: { backgroundColor: '#18332d', borderRadius: 14, gap: 6, padding: 16 },
+  vibeLabel: { color: '#f4c3ac', fontSize: 10, fontWeight: '900', letterSpacing: 1.8 },
+  vibeValue: { color: '#fffaf2', fontFamily: 'Georgia', fontSize: 24, fontWeight: '700', lineHeight: 30 },
   feedbackCard: { backgroundColor: '#f4ebdd', borderRadius: 14, gap: 8, padding: 16 },
   feedbackLabel: { color: '#e4572e', fontSize: 10, fontWeight: '900', letterSpacing: 1.8 },
-  feedbackText: { color: '#18332d', fontFamily: 'Georgia', fontSize: 20, lineHeight: 27 },
+  feedbackText: { color: '#18332d', fontFamily: 'Georgia', fontSize: 20, fontWeight: '600', lineHeight: 27 },
   retentionNote: { color: '#799087', fontSize: 12, lineHeight: 18 },
   takeTwoCard: { backgroundColor: '#e7dccb', borderColor: '#c4b5a2', borderRadius: 14, borderWidth: 1, gap: 10, padding: 16 },
   takeTwoTitle: { color: '#18332d', fontFamily: 'Georgia', fontSize: 26, fontWeight: '700', lineHeight: 32 },

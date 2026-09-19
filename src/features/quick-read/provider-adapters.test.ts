@@ -19,6 +19,7 @@ describe('R0D-C deterministic provider adapters', () => {
     await expect(adapters.feedback.analyze('transcript')).resolves.toMatchObject({
       clarity: 0.8,
       nextDrill: expect.any(String),
+      speakerVibe: 'The Storyteller',
     });
   });
 

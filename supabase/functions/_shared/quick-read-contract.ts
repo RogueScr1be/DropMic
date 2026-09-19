@@ -6,7 +6,21 @@ export type QuickReadResult = {
   strength: string;
   improvement: string;
   nextDrill: string;
+  speakerVibe?: SpeakerVibe;
 };
+
+export const SPEAKER_VIBES = [
+  'The Storyteller',
+  'The Straight Shooter',
+  'The Debater',
+  'The Connector',
+  'The Explorer',
+  'The Builder',
+  'The Analyst',
+  'The Spark',
+] as const;
+
+export type SpeakerVibe = (typeof SPEAKER_VIBES)[number];
 
 export const quickReadResultSchema = {
   type: 'object',
@@ -19,19 +33,42 @@ export const quickReadResultSchema = {
     strength: { type: 'string', minLength: 1, maxLength: 1200 },
     improvement: { type: 'string', minLength: 1, maxLength: 1200 },
     nextDrill: { type: 'string', minLength: 1, maxLength: 1200 },
+    speaker_vibe: { type: 'string', enum: SPEAKER_VIBES },
   },
-  required: ['clarity', 'structure', 'specificity', 'concision', 'strength', 'improvement', 'nextDrill'],
+  required: ['clarity', 'structure', 'specificity', 'concision', 'strength', 'improvement', 'nextDrill', 'speaker_vibe'],
 } as const;
 
-const resultKeys = ['clarity', 'structure', 'specificity', 'concision', 'strength', 'improvement', 'nextDrill'] as const;
+const clientResultKeys = ['clarity', 'structure', 'specificity', 'concision', 'strength', 'improvement', 'nextDrill'] as const;
 
-export function parseQuickReadResult(value: unknown): QuickReadResult | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+function isSpeakerVibe(value: unknown): value is SpeakerVibe {
+  return typeof value === 'string' && (SPEAKER_VIBES as readonly string[]).includes(value);
+}
+
+function wordCount(value: string) {
+  return value.trim() ? value.trim().split(/\s+/u).length : 0;
+}
+
+function isSingleSentence(value: string) {
+  return (value.match(/[.!?](?=\s|$)/gu) ?? []).length === 1;
+}
+
+function isSixtySecondDrill(value: string) {
+  return /\b60(?:-second|\s+seconds?)\b/iu.test(value);
+}
+
+function parseResultFields(record: Record<string, unknown>, speakerVibe: unknown, requireSpeakerVibe: boolean) {
+  const allowedKeys = requireSpeakerVibe
+    ? [...clientResultKeys, 'speaker_vibe']
+    : [...clientResultKeys, 'speakerVibe'];
+  const keys = Object.keys(record);
+  if (keys.some((key) => !allowedKeys.includes(key)) || clientResultKeys.some((key) => !(key in record))) {
+    return null;
+  }
+  if (requireSpeakerVibe && !('speaker_vibe' in record)) {
     return null;
   }
 
-  const record = value as Record<string, unknown>;
-  if (Object.keys(record).length !== resultKeys.length || resultKeys.some((key) => !(key in record))) {
+  if (requireSpeakerVibe ? !isSpeakerVibe(speakerVibe) : speakerVibe !== undefined && !isSpeakerVibe(speakerVibe)) {
     return null;
   }
 
@@ -50,6 +87,21 @@ export function parseQuickReadResult(value: unknown): QuickReadResult | null {
     }
   }
 
+  if (requireSpeakerVibe) {
+    const strength = (record.strength as string).trim();
+    const improvement = (record.improvement as string).trim();
+    const nextDrill = (record.nextDrill as string).trim();
+    if (
+      wordCount(strength) > 20
+      || wordCount(improvement) > 20
+      || !isSingleSentence(strength)
+      || !isSingleSentence(improvement)
+      || !isSixtySecondDrill(nextDrill)
+    ) {
+      return null;
+    }
+  }
+
   return {
     clarity: record.clarity as number,
     structure: record.structure as number,
@@ -58,7 +110,26 @@ export function parseQuickReadResult(value: unknown): QuickReadResult | null {
     strength: (record.strength as string).trim(),
     improvement: (record.improvement as string).trim(),
     nextDrill: (record.nextDrill as string).trim(),
-  };
+    ...(isSpeakerVibe(speakerVibe) ? { speakerVibe } : {}),
+  } satisfies QuickReadResult;
+}
+
+export function parseQuickReadResult(value: unknown): QuickReadResult | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  return parseResultFields(record, record.speakerVibe, false);
+}
+
+function parseProviderQuickReadResult(value: unknown): QuickReadResult | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  return parseResultFields(record, record.speaker_vibe, true);
 }
 
 export type FeedbackResponseParseResult =
@@ -126,7 +197,7 @@ export function parseFeedbackResponse(payload: unknown): FeedbackResponseParseRe
     };
   }
 
-  const result = parseQuickReadResult(parsed);
+  const result = parseProviderQuickReadResult(parsed);
   if (!result) {
     return {
       ok: false,

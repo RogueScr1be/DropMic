@@ -6,6 +6,7 @@ type QuickReadResult = {
   strength: string;
   improvement: string;
   nextDrill: string;
+  speakerVibe: 'The Storyteller' | 'The Straight Shooter' | 'The Debater' | 'The Connector' | 'The Explorer' | 'The Builder' | 'The Analyst' | 'The Spark';
 };
 
 export type TestFaultMode =
@@ -88,7 +89,8 @@ export function createDeterministicTestAdapters(config: {
           concision: 0.9,
           strength: 'The response has a clear opening.',
           improvement: 'Add one concrete example.',
-          nextDrill: 'Answer again with one example and a closing sentence.',
+          nextDrill: 'Answer again with one example and a closing sentence for exactly 60 seconds.',
+          speakerVibe: 'The Storyteller',
         } satisfies QuickReadResult;
       },
     } satisfies FeedbackAdapter,

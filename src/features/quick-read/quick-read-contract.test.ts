@@ -1,6 +1,7 @@
 import {
   parseFeedbackResponse,
   parseQuickReadResult,
+  SPEAKER_VIBES,
 } from '../../../supabase/functions/_shared/quick-read-contract';
 import { describe, expect, it } from '@jest/globals';
 
@@ -53,6 +54,20 @@ describe('Quick Read result contract', () => {
       }),
     ).toBeNull();
   });
+
+  it('keeps legacy results valid without fabricating a missing vibe', () => {
+    const result = parseQuickReadResult({
+      clarity: 0.8,
+      structure: 0.7,
+      specificity: 0.6,
+      concision: 0.9,
+      strength: 'A clear opening.',
+      improvement: 'Add one concrete example.',
+      nextDrill: 'Answer again with one example and a closing sentence.',
+    });
+
+    expect(result?.speakerVibe).toBeUndefined();
+  });
 });
 
 describe('Quick Read provider response boundary', () => {
@@ -63,7 +78,8 @@ describe('Quick Read provider response boundary', () => {
     concision: 0.9,
     strength: 'A clear opening.',
     improvement: 'Add one concrete example.',
-    nextDrill: 'Answer again with one example and a closing sentence.',
+    nextDrill: 'Answer again with one example and a closing sentence for exactly 60 seconds.',
+    speaker_vibe: 'The Storyteller',
   });
 
   it('accepts a Chat Completions structured response without exposing provider content', () => {
@@ -74,11 +90,12 @@ describe('Quick Read provider response boundary', () => {
         structure: 0.7,
         specificity: 0.6,
         concision: 0.9,
-        strength: 'A clear opening.',
-        improvement: 'Add one concrete example.',
-        nextDrill: 'Answer again with one example and a closing sentence.',
-      },
-    });
+      strength: 'A clear opening.',
+      improvement: 'Add one concrete example.',
+      nextDrill: 'Answer again with one example and a closing sentence for exactly 60 seconds.',
+      speakerVibe: 'The Storyteller',
+    },
+  });
   });
 
   it('classifies an empty or non-text provider message as a response-shape failure', () => {
@@ -108,6 +125,35 @@ describe('Quick Read provider response boundary', () => {
       ok: false,
       code: 'invalid_model_schema',
       diagnostics: { keys: ['clarity'] },
+    });
+  });
+
+  it('rejects an unknown speaker vibe at the provider boundary', () => {
+    const content = JSON.parse(validContent) as Record<string, unknown>;
+    content.speaker_vibe = 'The Improviser';
+    expect(parseFeedbackResponse({ choices: [{ message: { content: JSON.stringify(content) } }] })).toMatchObject({
+      ok: false,
+      code: 'invalid_model_schema',
+    });
+  });
+
+  it('accepts every approved speaker vibe', () => {
+    for (const speakerVibe of SPEAKER_VIBES) {
+      const content = JSON.parse(validContent) as Record<string, unknown>;
+      content.speaker_vibe = speakerVibe;
+      expect(parseFeedbackResponse({ choices: [{ message: { content: JSON.stringify(content) } }] })).toMatchObject({
+        ok: true,
+        result: { speakerVibe },
+      });
+    }
+  });
+
+  it('rejects coaching that exceeds the new sentence or drill contract', () => {
+    const content = JSON.parse(validContent) as Record<string, unknown>;
+    content.strength = 'One two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty one.';
+    expect(parseFeedbackResponse({ choices: [{ message: { content: JSON.stringify(content) } }] })).toMatchObject({
+      ok: false,
+      code: 'invalid_model_schema',
     });
   });
 });

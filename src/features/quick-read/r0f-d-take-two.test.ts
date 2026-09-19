@@ -35,6 +35,7 @@ const result = {
   strength: 'Clear opening.',
   improvement: 'Add one example.',
   nextDrill: 'Answer with one example and a closing sentence.',
+  speakerVibe: 'The Storyteller' as const,
 };
 
 const comparison = {
@@ -121,6 +122,42 @@ describe('R0F-D local Take Two journey', () => {
     expect(renderer.root.findByProps({ accessibilityLabel: 'Quick Read scores' })).toBeTruthy();
     resolveEligibility(false);
     await act(async () => { await Promise.resolve(); });
+  });
+
+  it('renders the four requested metrics and locks the paid-only tiles for free access', async () => {
+    mockedEligibility.mockResolvedValue(false);
+    const renderer = renderFlow();
+    await press(renderer, 'Upload & get my Quick Read');
+
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Drop Score: 75 percent' })).toBeTruthy();
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Clarity: 80 percent' })).toBeTruthy();
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Structure: locked for free access' })).toBeTruthy();
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Concision: locked for free access' })).toBeTruthy();
+    expect(renderer.root.findAllByProps({ accessibilityLabel: 'Specificity: 60 percent' })).toHaveLength(0);
+    const visibleUnits = renderer.root.findAllByProps({ children: '%' });
+    expect(visibleUnits.length).toBeGreaterThan(0);
+    expect(visibleUnits.every((unit) => !('marginTop' in (unit.props.style ?? {})))).toBe(true);
+  });
+
+  it('reveals the paid-only tiles through the existing entitlement boundary', async () => {
+    mockedEligibility.mockResolvedValue(true);
+    const renderer = renderFlow();
+    await press(renderer, 'Upload & get my Quick Read');
+    await act(async () => { await Promise.resolve(); });
+
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Structure: 70 percent' })).toBeTruthy();
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Concision: 90 percent' })).toBeTruthy();
+  });
+
+  it('does not fabricate a vibe for a legacy result', async () => {
+    const { speakerVibe: ignoredSpeakerVibe, ...legacyResult } = result;
+    void ignoredSpeakerVibe;
+    mockedStart.mockResolvedValueOnce({ runId: 'run-legacy', result: legacyResult });
+    const renderer = renderFlow();
+    await press(renderer, 'Upload & get my Quick Read');
+
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Speaker Vibe: not available for this saved result' })).toBeTruthy();
+    expect(renderer.root.findByProps({ children: 'Not available for this saved result.' })).toBeTruthy();
   });
 
   it('fires Take Two once on duplicate taps and preserves the baseline run ID', async () => {

@@ -21,10 +21,12 @@ describe('Quick Read calibrated provider prompt', () => {
     expect(FEEDBACK_SYSTEM_PROMPT).toContain('personality, identity, politics, or sensitive traits.');
   });
 
-  it('defines bounded strength, improvement, and measurable next-drill output', () => {
-    expect(FEEDBACK_SYSTEM_PROMPT).toContain('Strength must be exactly one specific transcript-supported coaching observation, one sentence, and no more than 35 words.');
-    expect(FEEDBACK_SYSTEM_PROMPT).toContain('Improvement must be exactly one highest-impact transcript-supported correction, one sentence, and no more than 35 words.');
-    expect(FEEDBACK_SYSTEM_PROMPT).toContain('nextDrill must prescribe exactly one exercise, one sentence, and no more than 30 words.');
+  it('defines bounded direct-address coaching and a measurable next-drill output', () => {
+    expect(FEEDBACK_SYSTEM_PROMPT).toContain('Strength must be exactly one specific transcript-supported coaching observation, one sentence, and no more than 20 words.');
+    expect(FEEDBACK_SYSTEM_PROMPT).toContain('Improvement must be exactly one highest-impact transcript-supported correction, one sentence, and no more than 20 words.');
+    expect(FEEDBACK_SYSTEM_PROMPT).toContain('nextDrill must prescribe exactly one concrete instruction, one sentence, and no more than 30 words.');
+    expect(FEEDBACK_SYSTEM_PROMPT).toContain('require exactly 60 seconds of practice');
+    expect(FEEDBACK_SYSTEM_PROMPT).toContain('Never say the speaker or the user in coaching text.');
     expect(FEEDBACK_SYSTEM_PROMPT).toContain('an observable success condition');
     expect(FEEDBACK_SYSTEM_PROMPT).toContain('Great job, Nice work, or You communicated well');
     expect(FEEDBACK_SYSTEM_PROMPT).toContain('Do not invent a quotation or detail.');
@@ -47,7 +49,7 @@ describe('Quick Read calibrated provider prompt', () => {
     expect(FEEDBACK_SYSTEM_PROMPT).toContain('Do not output transcript text outside the required coaching fields.');
   });
 
-  it('preserves the exact seven-field strict output contract', () => {
+  it('preserves the exact eight-field strict output contract', () => {
     expect(Object.keys(quickReadResultSchema.properties)).toEqual([
       'clarity',
       'structure',
@@ -56,6 +58,7 @@ describe('Quick Read calibrated provider prompt', () => {
       'strength',
       'improvement',
       'nextDrill',
+      'speaker_vibe',
     ]);
     expect(quickReadResultSchema.required).toEqual([
       'clarity',
@@ -65,6 +68,7 @@ describe('Quick Read calibrated provider prompt', () => {
       'strength',
       'improvement',
       'nextDrill',
+      'speaker_vibe',
     ]);
     expect(edgeSource).toContain('type: \'json_schema\'');
     expect(edgeSource).toContain('strict: true');

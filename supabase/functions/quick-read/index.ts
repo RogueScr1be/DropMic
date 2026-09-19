@@ -26,7 +26,7 @@ import {
 const AUDIO_BUCKET = 'quick-read-audio';
 const TRANSCRIPTION_MODEL = 'gpt-4o-mini-transcribe';
 const FEEDBACK_MODEL = 'gpt-5-nano';
-const ANALYSIS_VERSION = 'r0d-b.1';
+const ANALYSIS_VERSION = 'd3a.1';
 const PROVIDER_TIMEOUT_MS = 45_000;
 
 type AnalysisRun = {
@@ -232,7 +232,7 @@ async function getRun(admin: SupabaseClient, runId: string, ownerId: string) {
 async function getResult(admin: SupabaseClient, runId: string, ownerId: string) {
   const { data, error } = await admin
     .from('analysis_results')
-    .select('clarity,structure,specificity,concision,strength,improvement,next_drill')
+    .select('clarity,structure,specificity,concision,strength,improvement,next_drill,speaker_vibe')
     .eq('run_id', runId)
     .eq('owner_id', ownerId)
     .maybeSingle();
@@ -250,6 +250,7 @@ async function getResult(admin: SupabaseClient, runId: string, ownerId: string) 
     strength: data.strength,
     improvement: data.improvement,
     nextDrill: data.next_drill,
+    ...(data.speaker_vibe ? { speakerVibe: data.speaker_vibe } : {}),
   } satisfies QuickReadResult;
 }
 
@@ -402,6 +403,7 @@ async function processRun(
         strength: result.strength,
         improvement: result.improvement,
         next_drill: result.nextDrill,
+        speaker_vibe: result.speakerVibe,
         word_count: wordCount,
         metric_schema_version: 'r0d.1',
         analysis_version: ANALYSIS_VERSION,
