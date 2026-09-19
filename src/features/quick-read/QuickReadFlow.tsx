@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { isCurrentTake } from './attempt-identity';
@@ -7,29 +7,34 @@ import { startQuickRead } from './quick-read-service';
 import { compareTakeTwo } from './take-two-service';
 import type { TakeTwoComparison } from '../../../supabase/functions/_shared/take-two';
 import { getPlusDisplayEligibility, subscribeToPlusDisplaySession } from '@/features/billing/plus-display';
+import { DropWait } from '@/ui/DropWait';
 import type { QuickReadResult } from '../../../supabase/functions/_shared/quick-read-contract';
 
 type QuickReadStep = 'consent' | 'processing' | 'result' | 'error';
 
 export function QuickReadFlow({
   attemptId,
+  autoStart = false,
   audioExtension,
   audioUri,
   idempotencyKey,
   onClose,
   onTakeTwo,
   prompt,
+  reducedMotion = false,
   takeTwoBaselineRunId = null,
   takeId,
   visible,
 }: {
   attemptId: string | null;
+  autoStart?: boolean;
   audioExtension: 'm4a' | 'mp4' | 'webm' | 'wav' | 'ogg';
   audioUri: string | null;
   idempotencyKey: string;
   onClose: () => void;
   onTakeTwo?: (baselineRunId: string) => void;
   prompt?: string;
+  reducedMotion?: boolean;
   takeTwoBaselineRunId?: string | null;
   takeId: string;
   visible: boolean;
@@ -45,6 +50,7 @@ export function QuickReadFlow({
   const activeTakeId = useRef(takeId);
   const requestGeneration = useRef(0);
   const runInFlight = useRef(false);
+  const autoStartHandled = useRef(false);
   const takeTwoInFlight = useRef(false);
   const onCloseRef = useRef(onClose);
   const sessionIdentity = useRef<{ initialized: boolean; userId: string | null }>({ initialized: false, userId: null });
@@ -57,6 +63,7 @@ export function QuickReadFlow({
     activeTakeId.current = takeId;
     requestGeneration.current += 1;
     runInFlight.current = false;
+    autoStartHandled.current = false;
     takeTwoInFlight.current = false;
     return () => {
       requestGeneration.current += 1;
@@ -103,7 +110,7 @@ export function QuickReadFlow({
     onClose();
   };
 
-  const run = async () => {
+  const run = useCallback(async () => {
     if (runInFlight.current) {
       return;
     }
@@ -170,7 +177,19 @@ export function QuickReadFlow({
       setError(runError instanceof Error ? runError.message : "Quick Read couldn't finish.");
       setStep('error');
     }
-  };
+  }, [audioExtension, attemptId, audioUri, idempotencyKey, takeId, takeTwoBaselineRunId]);
+
+  useEffect(() => {
+    if (!visible) {
+      autoStartHandled.current = false;
+      return;
+    }
+    if (!autoStart || autoStartHandled.current) {
+      return;
+    }
+    autoStartHandled.current = true;
+    void run();
+  }, [autoStart, run, visible]);
 
   const startTakeTwo = () => {
     if (!currentRunId || !onTakeTwo || takeTwoInFlight.current) {
@@ -195,22 +214,14 @@ export function QuickReadFlow({
           {currentStep === 'consent' && (
             <>
               <Text accessibilityRole="header" style={styles.title}>Quick Read</Text>
-              <Text style={styles.body}>Upload this recording for a brief, private analysis of clarity, structure, specificity, and concision.</Text>
-              <View style={styles.notice}>
-                <Text style={styles.noticeBody}>Your audio is sent securely for processing, deleted after successful analysis, and never added to your durable practice metrics.</Text>
-                <Text style={styles.noticeBody}>The transcript is retained for up to 30 days. You can use up to 3 Quick Reads per day.</Text>
-              </View>
+              <Text style={styles.body}>Upload your Drop for analysis of clarity, structure, specificity, and concise word usage.</Text>
               <FlowButton label="Upload & get my Quick Read" onPress={() => void run()} />
               <FlowButton label="Not now" onPress={close} secondary />
             </>
           )}
 
           {currentStep === 'processing' && (
-            <View style={styles.center}>
-              <Text style={styles.kicker}>PRIVATE PROCESSING</Text>
-              <Text accessibilityRole="header" style={styles.title}>Listening for the useful part.</Text>
-              <Text style={styles.body}>Transcribing, shaping the feedback, and deleting the cloud audio when the result is safely stored.</Text>
-            </View>
+            <DropWait reducedMotion={reducedMotion} />
           )}
 
           {currentStep === 'error' && (
@@ -225,13 +236,12 @@ export function QuickReadFlow({
           {currentStep === 'result' && currentResult && (
             <>
               <Text accessibilityRole="header" style={styles.title}>Here’s your Quick Read.</Text>
-              <Text style={styles.body}>A focused signal for the next take—not a verdict.</Text>
               <SpeakerVibeCard speakerVibe={currentResult.speakerVibe} />
               <View accessibilityLabel="Quick Read scores" style={styles.scoreGrid}>
                 <Score label="Drop Score" value={calculateDropScore(currentResult)} />
                 <Score label="Clarity" value={Math.round(currentResult.clarity * 100)} />
                 <Score label="Structure" value={Math.round(currentResult.structure * 100)} locked={!plusEligible} />
-                <Score label="Concision" value={Math.round(currentResult.concision * 100)} locked={!plusEligible} />
+                <Score label="Directness" value={Math.round(currentResult.concision * 100)} locked={!plusEligible} />
               </View>
               <FeedbackCard label="WHERE YOU SHINE" text={currentResult.strength} />
               <FeedbackCard label="WHERE YOU NEED WORK" text={currentResult.improvement} />
@@ -291,7 +301,7 @@ function TakeTwoComparisonView({
       <MetricRow label="Clarity" value={comparison.deltas.scores.clarity} />
       <MetricRow label="Structure" value={comparison.deltas.scores.structure} />
       <MetricRow label="Specificity" value={comparison.deltas.scores.specificity} />
-      <MetricRow label="Concision" value={comparison.deltas.scores.concision} />
+      <MetricRow label="Directness" value={comparison.deltas.scores.concision} />
       <MetricRow label="Words" value={comparison.deltas.metrics.wordCount} />
       <MetricRow label="Words per minute" value={comparison.deltas.metrics.wordsPerMinute} />
       <MetricRow label="Filler words" value={comparison.deltas.metrics.fillerWordCount} />
@@ -312,7 +322,7 @@ function ComparisonColumn({
       <MetricRow label="Clarity" value={snapshot.scores.clarity} />
       <MetricRow label="Structure" value={snapshot.scores.structure} />
       <MetricRow label="Specificity" value={snapshot.scores.specificity} />
-      <MetricRow label="Concision" value={snapshot.scores.concision} />
+      <MetricRow label="Directness" value={snapshot.scores.concision} />
       <MetricRow label="Words" value={snapshot.metrics.wordCount} />
       <MetricRow label="Words per minute" value={snapshot.metrics.wordsPerMinute} />
       <MetricRow label="Filler words" value={snapshot.metrics.fillerWordCount} />
@@ -393,7 +403,7 @@ const styles = StyleSheet.create({
   scoreUnit: { color: '#799087', fontSize: 14, fontWeight: '900' },
   lockedValue: { color: '#799087', fontSize: 18, fontWeight: '900' },
   scoreLabel: { color: '#526c63', fontSize: 12, fontWeight: '800', marginTop: 8 },
-  vibeCard: { backgroundColor: '#18332d', borderRadius: 14, gap: 6, padding: 16 },
+  vibeCard: { backgroundColor: '#102a43', borderRadius: 14, gap: 6, padding: 16 },
   vibeLabel: { color: '#f4c3ac', fontSize: 10, fontWeight: '900', letterSpacing: 1.8 },
   vibeValue: { color: '#fffaf2', fontFamily: 'Georgia', fontSize: 24, fontWeight: '700', lineHeight: 30 },
   feedbackCard: { backgroundColor: '#f4ebdd', borderRadius: 14, gap: 8, padding: 16 },

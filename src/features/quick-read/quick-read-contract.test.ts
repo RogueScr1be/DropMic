@@ -76,9 +76,9 @@ describe('Quick Read provider response boundary', () => {
     structure: 0.7,
     specificity: 0.6,
     concision: 0.9,
-    strength: 'A clear opening.',
-    improvement: 'Add one concrete example.',
-    nextDrill: 'Answer again with one example and a closing sentence for exactly 60 seconds.',
+    strength: 'You open with a clear point.',
+    improvement: 'You can add one concrete example.',
+    nextDrill: 'You can answer again with one example and a closing sentence for exactly 60 seconds.',
     speaker_vibe: 'The Storyteller',
   });
 
@@ -90,9 +90,9 @@ describe('Quick Read provider response boundary', () => {
         structure: 0.7,
         specificity: 0.6,
         concision: 0.9,
-      strength: 'A clear opening.',
-      improvement: 'Add one concrete example.',
-      nextDrill: 'Answer again with one example and a closing sentence for exactly 60 seconds.',
+        strength: 'You open with a clear point.',
+        improvement: 'You can add one concrete example.',
+        nextDrill: 'You can answer again with one example and a closing sentence for exactly 60 seconds.',
       speakerVibe: 'The Storyteller',
     },
   });
@@ -148,9 +148,41 @@ describe('Quick Read provider response boundary', () => {
     }
   });
 
-  it('rejects coaching that exceeds the new sentence or drill contract', () => {
+  it('accepts structurally valid coaching with discouraged style phrases', () => {
     const content = JSON.parse(validContent) as Record<string, unknown>;
-    content.strength = 'One two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty one.';
+    content.strength = 'You present the main point clearly.';
+    content.improvement = 'You demonstrate one useful example.';
+    content.nextDrill = 'You imply the next step, then practice one example for exactly 60 seconds.';
+    expect(parseFeedbackResponse({ choices: [{ message: { content: JSON.stringify(content) } }] })).toMatchObject({
+      ok: true,
+    });
+  });
+
+  it('rejects coaching that exceeds the word or drill contract', () => {
+    const content = JSON.parse(validContent) as Record<string, unknown>;
+    content.strength = 'You one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twenty-one twenty-two twenty-three twenty-four.';
+    expect(parseFeedbackResponse({ choices: [{ message: { content: JSON.stringify(content) } }] })).toMatchObject({
+      ok: false,
+      code: 'invalid_model_schema',
+    });
+
+    content.strength = 'You make one clear point.';
+    content.nextDrill = `${Array.from({ length: 29 }, (_, index) => `word${index + 1}`).join(' ')} for exactly 60 seconds.`;
+    expect(parseFeedbackResponse({ choices: [{ message: { content: JSON.stringify(content) } }] })).toMatchObject({
+      ok: false,
+      code: 'invalid_model_schema',
+    });
+
+    content.nextDrill = 'You practice one example without naming a timed target.';
+    expect(parseFeedbackResponse({ choices: [{ message: { content: JSON.stringify(content) } }] })).toMatchObject({
+      ok: false,
+      code: 'invalid_model_schema',
+    });
+  });
+
+  it('rejects scores outside the declared increments', () => {
+    const content = JSON.parse(validContent) as Record<string, unknown>;
+    content.clarity = 0.83;
     expect(parseFeedbackResponse({ choices: [{ message: { content: JSON.stringify(content) } }] })).toMatchObject({
       ok: false,
       code: 'invalid_model_schema',

@@ -106,6 +106,7 @@ export default function AudioProofScreen() {
   const [isAuthFlowVisible, setIsAuthFlowVisible] = useState(auth === 'complete');
   const [authFlowMode, setAuthFlowMode] = useState<'conversion' | 'sign-in'>('conversion');
   const [isQuickReadVisible, setIsQuickReadVisible] = useState(false);
+  const [quickReadAutoStart, setQuickReadAutoStart] = useState(false);
   const [isSettingsVisible, setIsSettingsVisible] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
   const [takeIdentity, setTakeIdentity] = useState<TakeIdentity>(() => createTakeIdentity());
@@ -161,7 +162,8 @@ export default function AudioProofScreen() {
       : recordingState === 'error'
         ? 'error'
         : firstUsePhase);
-  const overlayVisible = isAuthFlowVisible || isQuickReadVisible || isSettingsVisible || micFlowSavePromptVisible;
+  const quickReadOwnsSettings = isQuickReadVisible;
+  const settingsHidden = quickReadOwnsSettings || isAuthFlowVisible || isSettingsVisible || micFlowSavePromptVisible;
   const showSideFlow = false;
 
   const currentAttempt = useMemo<UnclaimedAttempt | null>(() => {
@@ -1024,44 +1026,47 @@ export default function AudioProofScreen() {
   const openQuickRead = useCallback(async () => {
     if (requiresNewDropAfterDevLogin) {
       setActionError('Create a new Drop before starting a Quick Read.');
-      return;
+      return false;
     }
     if (micFlowSavePromptVisible) {
       setActionError('Choose whether to use a Mic Save before starting Quick Read.');
-      return;
+      return false;
     }
     try {
       const requestedTakeId = takeIdentityLifecycleRef.current.identity.clientAttemptId;
       const session = await getSession();
       if (takeIdentityLifecycleRef.current.identity.clientAttemptId !== requestedTakeId) {
-        return;
+        return false;
       }
       if (!session?.user || session.user.is_anonymous) {
         setAuthFlowMode('conversion');
         setIsSettingsVisible(false);
         setIsAuthFlowVisible(true);
-        return;
+        return false;
       }
       const attemptId = serverAttemptId ?? (await claimUnclaimedAttempt(currentAttempt));
       if (takeIdentityLifecycleRef.current.identity.clientAttemptId !== requestedTakeId) {
-        return;
+        return false;
       }
       if (typeof attemptId !== 'string') {
         setActionError('Finish account setup before starting a Quick Read.');
         setAuthFlowMode('conversion');
         setIsSettingsVisible(false);
         setIsAuthFlowVisible(true);
-        return;
+        return false;
       }
       setIsAuthFlowVisible(false);
       setIsSettingsVisible(false);
       setServerAttemptId(attemptId);
+      setQuickReadAutoStart(true);
       setIsQuickReadVisible(true);
+      return true;
     } catch (openError) {
       setActionError(openError instanceof Error ? openError.message : 'Sign in before starting a Quick Read.');
       setAuthFlowMode('conversion');
       setIsSettingsVisible(false);
       setIsAuthFlowVisible(true);
+      return false;
     }
   }, [currentAttempt, micFlowSavePromptVisible, requiresNewDropAfterDevLogin, serverAttemptId]);
 
@@ -1095,11 +1100,14 @@ export default function AudioProofScreen() {
           <AppHeader
             onBack={displayedPhase === 'duration_selection' ? () => setPhase('topic_reveal') : undefined}
             onSettings={() => {
+              if (quickReadOwnsSettings) {
+                return;
+              }
               setIsAuthFlowVisible(false);
               setIsQuickReadVisible(false);
               setIsSettingsVisible(true);
             }}
-            settingsHidden={overlayVisible}
+            settingsHidden={settingsHidden}
           />
         )}>
         {(layout) => (
@@ -1259,7 +1267,7 @@ export default function AudioProofScreen() {
                 dispatch({ type: 'FAILURE', message: playError instanceof Error ? playError.message : 'Unable to play recording.' });
               })
             }
-            onQuickRead={() => void openQuickRead()}
+            onQuickRead={openQuickRead}
             onRetry={() => void retryAttempt()}
             prompt={topic.prompt}
             recordingUri={recordingUri}
@@ -1316,6 +1324,7 @@ export default function AudioProofScreen() {
         visible={isSettingsVisible}
       />
       <QuickReadFlow
+        autoStart={quickReadAutoStart}
         key={takeIdentity.clientAttemptId}
         attemptId={serverAttemptId}
         audioExtension={quickReadAudioExtension(recordingUri)}
@@ -1323,12 +1332,14 @@ export default function AudioProofScreen() {
         idempotencyKey={takeIdentity.quickReadIdempotencyKey}
         onClose={() => {
           setIsQuickReadVisible(false);
+          setQuickReadAutoStart(false);
           if (takeTwoBaselineRunId) {
             setTakeTwoBaselineRunId(null);
           }
         }}
         onTakeTwo={beginTakeTwo}
         prompt={topic.prompt}
+        reducedMotion={reducedMotion}
         takeTwoBaselineRunId={takeTwoBaselineRunId}
         takeId={takeIdentity.clientAttemptId}
         visible={isQuickReadVisible}
@@ -1622,13 +1633,26 @@ function CompletionView({
   onDismiss: () => void;
   onPause: () => void;
   onPlay: () => void;
-  onQuickRead: () => void;
+  onQuickRead: () => Promise<boolean>;
   onRetry: () => void;
   prompt: string;
   recordingUri: string;
   reducedMotion: boolean;
 }) {
   const [deleteConfirmationVisible, setDeleteConfirmationVisible] = useState(false);
+  const [quickReadStarting, setQuickReadStarting] = useState(false);
+
+  const startQuickRead = async () => {
+    if (quickReadStarting) {
+      return;
+    }
+    setQuickReadStarting(true);
+    try {
+      await onQuickRead();
+    } finally {
+      setQuickReadStarting(false);
+    }
+  };
 
   return (
     <>
@@ -1651,7 +1675,7 @@ function CompletionView({
         <Text accessibilityElementsHidden style={styles.recordingMetadata} testID="recording-uri">{recordingUri}</Text>
         <PromptCard prompt={prompt} />
         <View style={styles.actionStack}>
-          <ActionButton label="Quick Read" onPress={onQuickRead} />
+          <ActionButton disabled={quickReadStarting} label={quickReadStarting ? 'Starting Quick Read…' : 'Upload & get my Quick Read'} onPress={() => void startQuickRead()} />
           <ActionButton label={isPlaybackPlaying ? 'Pause' : 'Play Drop'} onPress={isPlaybackPlaying ? onPause : onPlay} secondary />
           {!deleteConfirmationVisible ? (
             <View style={styles.secondaryRow}>

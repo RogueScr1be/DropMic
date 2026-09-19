@@ -94,6 +94,33 @@ describe('R0F-D local Take Two journey', () => {
     mockedCompare.mockResolvedValue(comparison);
   });
 
+  it('auto-starts completion entry once while Saved Drop entry keeps consent', async () => {
+    let resolveRun!: (value: Awaited<ReturnType<typeof startQuickRead>>) => void;
+    mockedStart.mockReturnValueOnce(new Promise((resolve) => {
+      resolveRun = resolve;
+    }));
+    const completion = renderFlow({ autoStart: true });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mockedStart).toHaveBeenCalledTimes(1);
+    expect(completion.root.findByProps({ accessibilityLabel: 'Analyzing Drop' })).toBeTruthy();
+
+    await act(async () => {
+      completion.update(React.createElement(QuickReadFlow, props({ autoStart: true })));
+    });
+    expect(mockedStart).toHaveBeenCalledTimes(1);
+    resolveRun({ runId: 'run-b', result });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const savedDrop = renderFlow();
+    expect(savedDrop.root.findByProps({ accessibilityLabel: 'Upload & get my Quick Read' })).toBeTruthy();
+    expect(mockedStart).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps Free and anonymous users free of a CTA, including eligibility failure', async () => {
     mockedEligibility.mockResolvedValue(false);
     const free = renderFlow();
@@ -132,7 +159,7 @@ describe('R0F-D local Take Two journey', () => {
     expect(renderer.root.findByProps({ accessibilityLabel: 'Drop Score: 75 percent' })).toBeTruthy();
     expect(renderer.root.findByProps({ accessibilityLabel: 'Clarity: 80 percent' })).toBeTruthy();
     expect(renderer.root.findByProps({ accessibilityLabel: 'Structure: locked for free access' })).toBeTruthy();
-    expect(renderer.root.findByProps({ accessibilityLabel: 'Concision: locked for free access' })).toBeTruthy();
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Directness: locked for free access' })).toBeTruthy();
     expect(renderer.root.findAllByProps({ accessibilityLabel: 'Specificity: 60 percent' })).toHaveLength(0);
     const visibleUnits = renderer.root.findAllByProps({ children: '%' });
     expect(visibleUnits.length).toBeGreaterThan(0);
@@ -146,7 +173,7 @@ describe('R0F-D local Take Two journey', () => {
     await act(async () => { await Promise.resolve(); });
 
     expect(renderer.root.findByProps({ accessibilityLabel: 'Structure: 70 percent' })).toBeTruthy();
-    expect(renderer.root.findByProps({ accessibilityLabel: 'Concision: 90 percent' })).toBeTruthy();
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Directness: 90 percent' })).toBeTruthy();
   });
 
   it('does not fabricate a vibe for a legacy result', async () => {

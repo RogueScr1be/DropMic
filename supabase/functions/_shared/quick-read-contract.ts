@@ -48,8 +48,14 @@ function wordCount(value: string) {
   return value.trim() ? value.trim().split(/\s+/u).length : 0;
 }
 
-function isSingleSentence(value: string) {
-  return (value.match(/[.!?](?=\s|$)/gu) ?? []).length === 1;
+function isValidScore(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    value <= 1 &&
+    Math.abs(value * 20 - Math.round(value * 20)) < 1e-9
+  );
 }
 
 function isSixtySecondDrill(value: string) {
@@ -75,7 +81,7 @@ function parseResultFields(record: Record<string, unknown>, speakerVibe: unknown
   const scores = ['clarity', 'structure', 'specificity', 'concision'] as const;
   for (const key of scores) {
     const score = record[key];
-    if (typeof score !== 'number' || !Number.isFinite(score) || score < 0 || score > 1) {
+    if (!isValidScore(score)) {
       return null;
     }
   }
@@ -92,10 +98,9 @@ function parseResultFields(record: Record<string, unknown>, speakerVibe: unknown
     const improvement = (record.improvement as string).trim();
     const nextDrill = (record.nextDrill as string).trim();
     if (
-      wordCount(strength) > 20
-      || wordCount(improvement) > 20
-      || !isSingleSentence(strength)
-      || !isSingleSentence(improvement)
+      wordCount(strength) > 24
+      || wordCount(improvement) > 24
+      || wordCount(nextDrill) > 28
       || !isSixtySecondDrill(nextDrill)
     ) {
       return null;

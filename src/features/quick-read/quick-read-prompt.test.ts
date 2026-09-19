@@ -21,15 +21,18 @@ describe('Quick Read calibrated provider prompt', () => {
     expect(FEEDBACK_SYSTEM_PROMPT).toContain('personality, identity, politics, or sensitive traits.');
   });
 
-  it('defines bounded direct-address coaching and a measurable next-drill output', () => {
-    expect(FEEDBACK_SYSTEM_PROMPT).toContain('Strength must be exactly one specific transcript-supported coaching observation, one sentence, and no more than 20 words.');
-    expect(FEEDBACK_SYSTEM_PROMPT).toContain('Improvement must be exactly one highest-impact transcript-supported correction, one sentence, and no more than 20 words.');
-    expect(FEEDBACK_SYSTEM_PROMPT).toContain('nextDrill must prescribe exactly one concrete instruction, one sentence, and no more than 30 words.');
+  it('defines bounded, human, direct-address coaching and a measurable next-drill output', () => {
+    expect(FEEDBACK_SYSTEM_PROMPT).toContain('Where You Shine must contain one or two short transcript-supported sentences, no more than 24 words total.');
+    expect(FEEDBACK_SYSTEM_PROMPT).toContain('Where You Need Work must contain one or two short transcript-supported sentences, no more than 24 words total.');
+    expect(FEEDBACK_SYSTEM_PROMPT).toContain('Drop Drill must prescribe one concrete action in one or two short sentences, no more than 28 words total.');
     expect(FEEDBACK_SYSTEM_PROMPT).toContain('require exactly 60 seconds of practice');
     expect(FEEDBACK_SYSTEM_PROMPT).toContain('Never say the speaker or the user in coaching text.');
     expect(FEEDBACK_SYSTEM_PROMPT).toContain('an observable success condition');
     expect(FEEDBACK_SYSTEM_PROMPT).toContain('Great job, Nice work, or You communicated well');
     expect(FEEDBACK_SYSTEM_PROMPT).toContain('Do not invent a quotation or detail.');
+    expect(FEEDBACK_SYSTEM_PROMPT).toContain('Sound like a supportive speaking partner, not a teacher grading an essay.');
+    expect(FEEDBACK_SYSTEM_PROMPT).toContain('The speaker, The user, You present, You demonstrate, You imply');
+    expect(FEEDBACK_SYSTEM_PROMPT).toContain('This strengthens the contrast, This helps your point land, or Concision');
   });
 
   it('defines weak-input, fragmented-input, and sensitive-content behavior', () => {

@@ -87,9 +87,9 @@ export function createDeterministicTestAdapters(config: {
           structure: 0.7,
           specificity: 0.6,
           concision: 0.9,
-          strength: 'The response has a clear opening.',
-          improvement: 'Add one concrete example.',
-          nextDrill: 'Answer again with one example and a closing sentence for exactly 60 seconds.',
+          strength: 'You open with a clear point.',
+          improvement: 'You can add one concrete example.',
+          nextDrill: 'You can answer again with one example and a closing sentence for exactly 60 seconds.',
           speakerVibe: 'The Storyteller',
         } satisfies QuickReadResult;
       },
