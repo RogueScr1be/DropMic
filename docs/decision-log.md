@@ -649,3 +649,17 @@ Keep the QA7-I audio-session repair as a source-control checkpoint while deferri
 ### Acceptance
 
 Focused QA7-I tests, affected TSX suites, full Jest, typecheck, lint, web export, and Playwright responsive/audio proof passed. No physical iPhone was connected for the silent-mode matrix, so physical behavior is not recorded as passed. VoiceOver is waived from the current demo gate because the observed problem was device-level; authorized live OTP remains a release check. No deployment is authorized.
+
+## 2026-09-24 — Close QA8B orphan-audio hygiene acceptance
+
+### Decision
+
+Use the applied `20260920000000_qa8b_orphan_audio_rpc.sql` migration from commit `d81c31f` as the sole enumeration boundary for orphaned Quick Read audio. Its service-role-only RPC accepts only Quick Read source paths older than 24 hours whose owner matches the path and which have no matching `analysis_runs.audio_object_path` or `attempts.id`. Keep `quick-read-cleanup` version 4 and its dedicated header secret; do not broaden the function or treat manual invocation as automated retention.
+
+### Evidence
+
+After rotating `R0D_C_CLEANUP_SECRET` through macOS Keychain and the Supabase Edge Function secret, the aggregate preflight was `0 / 0 / 0 / 2` for stale runs, expired linked audio, expired transcripts, and orphan audio. One authenticated v4 request returned HTTP 200 and reported two orphan deletions, zero failures, and zero ambiguities. The post-cleanup aggregate was `0 / 0 / 0 / 0`; no provider, quota, Take Two, or repository activity occurred.
+
+### Rollback limits
+
+The RPC definition can be reverted only through a reviewed forward migration and coordinated function compatibility check. Deleted Storage objects cannot be restored by rollback. The rotated secret must not be recovered from history; any future change requires a new scoped rotation and a fresh aggregate preflight.

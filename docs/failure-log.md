@@ -323,3 +323,13 @@
 - Resolution: QA7-I centralizes serialized automatic, explicit-playback, and recording modes; automatic sounds request `playsInSilentMode: false`, explicit Saved Drop playback requests `playsInSilentMode: true`, and recording/playback cleanup restores automatic mode without blocking completion on nonessential audio failures.
 - Evidence: focused QA7-I tests, affected TSX suites, full Jest, typecheck, lint, web export, and Playwright responsive/audio proof passed. Physical mute-switch behavior remains unverified because no physical iPhone was connected; do not claim it as passed.
 - Guardrail: preserve the physical silent-mode matrix as a release check and do not deploy until it passes. Authorized live OTP also remains a release check; VoiceOver is waived from the current demo gate because the observed problem was device-level.
+
+## 2026-09-24 — QA8B orphan-audio hygiene required a bounded deletion boundary
+
+- Symptom: two Quick Read audio objects remained in Storage without a matching analysis run or attempt reference.
+- Root cause: orphan cleanup required an explicit server-side enumeration boundary; a broad Storage sweep would not prove age, owner/path integrity, or absence of durable references before irreversible deletion.
+- Category: Storage lifecycle/privacy.
+- Resolution: migration `20260920000000_qa8b_orphan_audio_rpc.sql` (commit `d81c31f`) added the service-role-only `list_orphaned_quick_read_objects()` RPC. It limits candidates to Quick Read source paths older than 24 hours, requires a non-null owner matching the path, excludes every matching run and attempt, and caps results at 50. The dedicated cleanup secret was rotated through macOS Keychain and Supabase. After a fresh `0 / 0 / 0 / 2` preflight, one authenticated `quick-read-cleanup` v4 request returned HTTP 200 and deleted exactly two orphans with zero failures or ambiguities; the post-cleanup aggregate was `0 / 0 / 0 / 0`.
+- Impact: no stale runs, linked audio, transcripts, provider calls, quota units, Take Two activity, or repository files changed. The deletion was intentionally irreversible.
+- Rollback limit: code and migration definitions can be reverted only with a reviewed forward migration and function-compatibility check; deleted Storage objects cannot be recovered by rollback. Automatic scheduling and recurring retention monitoring remain unaccepted.
+- Guardrail: require the immediate aggregate preflight to remain `0 / 0 / 0 / 2` for this scoped operation, keep the cleanup header secret out of the repository and logs, and never invoke the combined endpoint when another cleanup category is nonzero without separate authorization.

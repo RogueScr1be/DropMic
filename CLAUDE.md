@@ -78,6 +78,7 @@
 - Presentation state must never expose controls whose events are illegal for the underlying recording-machine state; dismissing a completed take must retire only the completed transient machine state before duration selection.
 - Recorder cleanup must treat `prepared` as a never-started phase: do not finalize it on cancellation or unmount, and release web blob URLs idempotently only after playback stops. Test replaced, abandoned, retained, and unmounted URL ownership without revoking an actively playing source.
 - Manual cleanup acceptance is not production retention proof; automatic retention remains a pre-public-launch gate.
+- QA8B orphan-audio cleanup is accepted at migration commit `d81c31f`: the service-role-only `list_orphaned_quick_read_objects()` RPC restricts candidates to aged, owner-matched Quick Read source paths with no run or attempt reference. The one-time live cleanup deleted exactly two verified orphan objects with zero stale-run, linked-audio, transcript, failure, or ambiguity changes. The dedicated cleanup secret was rotated through macOS Keychain and Supabase; never treat irreversible deletion as reversible. Automatic scheduling remains a separate gate.
 - Account deletion is incomplete until database rows and Storage objects are independently verified absent.
 - Persistent coaching may store derived signals but cannot extend raw-audio or transcript retention.
 - Paid provider access must be enforced server-side; cached client entitlements are display-only.
