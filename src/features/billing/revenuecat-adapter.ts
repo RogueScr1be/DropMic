@@ -29,6 +29,9 @@ export type RevenueCatAdapter = {
   reconcileIdentity: (session: Session | null | undefined) => Promise<RevenueCatIdentityResult>;
   clearAppOwnedBillingAvailability: () => void;
   getTestStoreOfferings: (session: Session | null | undefined) => Promise<unknown | null>;
+  purchasePackage?: (session: Session | null | undefined, packageIdentifier: string) => Promise<{ ok: true } | { ok: false; reason: string }>;
+  restorePurchases?: (session: Session | null | undefined) => Promise<{ ok: true } | { ok: false; reason: string }>;
+  presentCustomerCenter?: () => Promise<boolean>;
   isBillingAvailable: () => boolean;
 };
 
@@ -44,6 +47,14 @@ function permanentUserId(session: Session | null | undefined): string | null {
 
 function staleResult(): RevenueCatIdentityResult {
   return { available: false, reason: 'stale_session' };
+}
+
+function isPurchaseCancelled(error: unknown) {
+  if (!error || typeof error !== 'object') return false;
+  const detail = error as { code?: unknown; message?: unknown; userCancelled?: unknown };
+  return detail.userCancelled === true ||
+    (typeof detail.code === 'string' && /cancel/i.test(detail.code)) ||
+    (typeof detail.message === 'string' && /cancel/i.test(detail.message));
 }
 
 export function createRevenueCatAdapter(options: AdapterOptions = {}): RevenueCatAdapter {
@@ -184,10 +195,53 @@ export function createRevenueCatAdapter(options: AdapterOptions = {}): RevenueCa
     }
   };
 
+  const purchasePackage = async (session: Session | null | undefined, packageIdentifier: string) => {
+    const offerings = await getTestStoreOfferings(session);
+    const packages = (offerings as { current?: { availablePackages?: { identifier?: string }[] } } | null)?.current?.availablePackages ?? [];
+    const selected = packages.find((item) => item.identifier === packageIdentifier);
+    if (!selected || typeof client.purchasePackage !== 'function') {
+      return { ok: false as const, reason: 'product_unavailable' };
+    }
+    try {
+      await client.purchasePackage(selected);
+      return { ok: true as const };
+    } catch (error) {
+      return { ok: false as const, reason: isPurchaseCancelled(error) ? 'purchase_cancelled' : 'purchase_failed' };
+    }
+  };
+
+  const restorePurchases = async (session: Session | null | undefined) => {
+    const requestedUserId = permanentUserId(session);
+    if (!requestedUserId || !billingAvailable || sdkUserId !== requestedUserId || typeof client.restorePurchases !== 'function') {
+      return { ok: false as const, reason: 'billing_unavailable' };
+    }
+    try {
+      await client.restorePurchases();
+      return { ok: true as const };
+    } catch {
+      return { ok: false as const, reason: 'restore_failed' };
+    }
+  };
+
+  const presentCustomerCenter = async () => {
+    if (!billingAvailable || typeof client.presentCustomerCenter !== 'function') {
+      return false;
+    }
+    try {
+      await client.presentCustomerCenter();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   return {
     reconcileIdentity,
     clearAppOwnedBillingAvailability,
     getTestStoreOfferings,
+    purchasePackage,
+    restorePurchases,
+    presentCustomerCenter,
     isBillingAvailable: () => billingAvailable,
   };
 }

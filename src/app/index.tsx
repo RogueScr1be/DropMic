@@ -19,7 +19,11 @@ import {
   type MicFlowSnapshot,
 } from '@/features/mic-flow/mic-flow-service';
 import { MicFlowCard } from '@/features/mic-flow/MicFlowCard';
+import { trackEvent } from '@/features/analytics/analytics';
+import { createChallenge, resolveChallenge } from '@/features/challenge/challenge-service';
+import { PlusPaywall } from '@/features/billing/PlusPaywall';
 import { bindRevenueCatSession } from '@/features/billing/revenuecat-session';
+import { getPlusDisplayEligibility } from '@/features/billing/plus-display';
 import { AgeGate } from '@/features/first-use/AgeGate';
 import {
   firstScreenAfterSplash,
@@ -51,11 +55,16 @@ import { useLocalAudioRecorder } from '@/features/recording/use-local-audio-reco
 import { HoldToCancel } from '@/features/recording/HoldToCancel';
 import {
   clearLocalCompletedTake,
-  getLocalCompletedTake,
   LOCAL_COMPLETED_TAKE_VERSION,
-  saveAndVerifyLocalCompletedTake,
   type LocalCompletedTake,
 } from '@/features/recording/local-completed-take';
+import {
+  deleteSavedDrop,
+  getSavedDrops,
+  saveAndVerifySavedDrop,
+  SavedDropLimitError,
+  type SavedDrop,
+} from '@/features/recording/saved-drops';
 import {
   deriveActiveElapsedMs,
   isInterruptibleState,
@@ -72,6 +81,8 @@ import { AppShell } from '@/ui/AppShell';
 import { DurationPicker } from '@/ui/DurationPicker';
 import { PromptCard } from '@/ui/PromptCard';
 import { colors, radii, spacing, typography } from '@/ui/theme';
+import { shareDropCard } from '@/features/share/share-service';
+import { ShareCard } from '@/features/share/ShareCard';
 
 type ExperiencePhase = FirstUsePhase | 'interrupted' | 'error';
 
@@ -79,7 +90,7 @@ const COMPLETION_HEADLINES = ['Great Job!'] as const;
 
 export default function AudioProofScreen() {
   const audio = useLocalAudioRecorder();
-  const { auth } = useLocalSearchParams<{ auth?: string }>();
+  const { auth, challenge } = useLocalSearchParams<{ auth?: string; challenge?: string }>();
   const reducedMotion = useReducedMotion();
   const recordingState = useRecordingStore((store) => store.state);
   const selectedDurationSeconds = useRecordingStore((store) => store.selectedDurationSeconds);
@@ -108,6 +119,9 @@ export default function AudioProofScreen() {
   const [isQuickReadVisible, setIsQuickReadVisible] = useState(false);
   const [quickReadAutoStart, setQuickReadAutoStart] = useState(false);
   const [isSettingsVisible, setIsSettingsVisible] = useState(false);
+  const [isPlusPaywallVisible, setIsPlusPaywallVisible] = useState(false);
+  const [plusEnabled, setPlusEnabled] = useState(false);
+  const [challengeAttempt, setChallengeAttempt] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
   const [takeIdentity, setTakeIdentity] = useState<TakeIdentity>(() => createTakeIdentity());
   const [takeTwoBaselineRunId, setTakeTwoBaselineRunId] = useState<string | null>(null);
@@ -115,11 +129,14 @@ export default function AudioProofScreen() {
   const [micFlowSnapshot, setMicFlowSnapshot] = useState<MicFlowSnapshot | null>(null);
   const [micFlowSnapshotLoading, setMicFlowSnapshotLoading] = useState(false);
   const [micFlowSavePromptVisible, setMicFlowSavePromptVisible] = useState(false);
-  const [retainedCompletedTake, setRetainedCompletedTake] = useState<LocalCompletedTake | null>(null);
+  const [retainedCompletedTake, setRetainedCompletedTake] = useState<SavedDrop | null>(null);
   const [completedTakeHidden, setCompletedTakeHidden] = useState(false);
   const [retainedTakeStartPromptVisible, setRetainedTakeStartPromptVisible] = useState(false);
   const [retainedTakeHydrating, setRetainedTakeHydrating] = useState(true);
   const [requiresNewDropAfterDevLogin, setRequiresNewDropAfterDevLogin] = useState(false);
+  const challengeHandledRef = useRef<string | null>(null);
+  const challengeResolvingRef = useRef<string | null>(null);
+  const shareInFlightRef = useRef(false);
   const playCompletionBell = useCompletionBell();
   const stopInFlight = useRef(false);
   const completionInFlight = useRef(false);
@@ -250,7 +267,7 @@ export default function AudioProofScreen() {
   useEffect(() => {
     let cancelled = false;
     void getMicFlowOwnerId().then(async (ownerId) => {
-      const restored = await getLocalCompletedTake(ownerId);
+      const restored = (await getSavedDrops(ownerId))[0] ?? null;
       if (!cancelled) {
         setRetainedCompletedTake(restored);
         setRetainedTakeHydrating(false);
@@ -265,6 +282,18 @@ export default function AudioProofScreen() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    void getPlusDisplayEligibility().then(setPlusEnabled);
+  }, []);
+
+  useEffect(() => {
+    void trackEvent('app_opened');
+  }, []);
+
+  useEffect(() => {
+    void trackEvent('prompt_viewed', { dedupeKey: `prompt:${topic.id}` });
+  }, [topic.id]);
 
   useEffect(() => {
     return bindRevenueCatSession();
@@ -365,7 +394,7 @@ export default function AudioProofScreen() {
     }
     const input: MicFlowCompletion = {
       completionId: attempt.clientAttemptId,
-      mode: 'cold_take',
+      mode: challengeAttempt ? 'challenge_response' : 'cold_take',
       topicId: attempt.topicId,
       selectedDurationSeconds: attempt.selectedDurationSeconds,
       completedDurationSeconds: attempt.completedDurationSeconds,
@@ -374,7 +403,7 @@ export default function AudioProofScreen() {
     const generation = micFlowIdentityGenerationRef.current;
     pendingMicFlowCompletionRef.current = { input, identity, generation };
     void submitMicFlowCompletion(null);
-  }, [submitMicFlowCompletion]);
+  }, [challengeAttempt, submitMicFlowCompletion]);
 
   const persistFinalizedAttempt = useCallback(async (completedAtMsForAttempt: number, activeElapsedMs: number) => {
     const attempt: UnclaimedAttempt = {
@@ -400,8 +429,9 @@ export default function AudioProofScreen() {
       setRetainedCompletedTake(null);
       throw new Error('A local owner is required before this recording can be saved.');
     }
-    const retainedTake: LocalCompletedTake = {
+    const retainedTake: SavedDrop = {
       version: LOCAL_COMPLETED_TAKE_VERSION,
+      savedDropId: takeIdentityLifecycleRef.current.identity.clientAttemptId,
       clientAttemptId: takeIdentityLifecycleRef.current.identity.clientAttemptId,
       completedAt: new Date(completedAtMsForAttempt).toISOString(),
       completedDurationSeconds: Math.round(activeElapsedMs / 1000),
@@ -412,9 +442,17 @@ export default function AudioProofScreen() {
       selectedDurationSeconds,
       topicId: topic.id,
     };
-    const verifiedTake = await saveAndVerifyLocalCompletedTake(retainedTake);
-    setRetainedCompletedTake(verifiedTake);
-    return verifiedTake;
+    try {
+      const verifiedTake = await saveAndVerifySavedDrop(retainedTake, { plus: await getPlusDisplayEligibility() });
+      setRetainedCompletedTake(verifiedTake);
+      return verifiedTake;
+    } catch (error) {
+      if (error instanceof SavedDropLimitError) {
+        await trackEvent('saved_drop_limit_reached', { dedupeKey: `saved-limit:${retainedTake.ownerId}:${new Date().toISOString().slice(0, 10)}` });
+        setActionError('You have three Saved Drops. Upgrade to Plus to keep this new Drop, or delete an older one.');
+      }
+      throw error;
+    }
   }, [selectedDurationSeconds, topic.id, topic.prompt]);
 
   const beginNewTake = useCallback((comparisonBaselineRunId: string | null = null, nextTakeIdentity = createTakeIdentity()) => {
@@ -425,6 +463,7 @@ export default function AudioProofScreen() {
     recordingOwnerIdRef.current = null;
     takeIdentityLifecycleRef.current = createPendingTakeIdentity(nextTakeIdentity);
     setTakeIdentity(nextTakeIdentity);
+    setChallengeAttempt(false);
     setServerAttemptId(null);
     setTakeTwoBaselineRunId(comparisonBaselineRunId);
     setIsQuickReadVisible(false);
@@ -432,6 +471,26 @@ export default function AudioProofScreen() {
     setMicFlowSavePromptVisible(false);
     setRetainedTakeStartPromptVisible(false);
   }, []);
+
+  useEffect(() => {
+    if (!challenge || challengeHandledRef.current === challenge || challengeResolvingRef.current === challenge || !splashElapsed || ageGateAccepted === null) {
+      return;
+    }
+    challengeResolvingRef.current = challenge;
+    void resolveChallenge(challenge).then((resolved) => {
+      challengeHandledRef.current = challenge;
+      challengeResolvingRef.current = null;
+      beginNewTake();
+      setChallengeAttempt(true);
+      setTopic({ category: resolved.category ?? 'Challenge', id: 'challenge', prompt: resolved.prompt });
+      dispatch({ type: 'SELECT_DURATION', duration: resolved.durationSeconds });
+      setPhase('topic_reveal');
+      void trackEvent('challenge_link_opened');
+    }).catch(() => {
+      challengeResolvingRef.current = null;
+      setActionError('This challenge is no longer available. Try a fresh Drop instead.');
+    });
+  }, [ageGateAccepted, beginNewTake, challenge, dispatch, splashElapsed]);
 
   const showRetainedCompletedTake = useCallback((take: LocalCompletedTake) => {
     setTopic({ category: 'Recovered', id: take.topicId, prompt: take.prompt });
@@ -536,6 +595,10 @@ export default function AudioProofScreen() {
         dispatch({ type: 'PERSISTENCE_CONFIRMED', completedAtMs: completedAtMsForAttempt });
         playCompletionBell(savedAttempt.clientAttemptId);
         exposeVerifiedCompletion(savedAttempt);
+        void trackEvent('recording_completed', { dedupeKey: `recording-completed:${savedAttempt.clientAttemptId}` });
+        if (challengeAttempt) {
+          void trackEvent('challenge_recording_completed', { dedupeKey: `challenge-recording-completed:${savedAttempt.clientAttemptId}` });
+        }
       } else {
         dispatch({ type: 'FAILURE', message: 'The recording did not produce a local file.' });
       }
@@ -549,7 +612,7 @@ export default function AudioProofScreen() {
     } finally {
       completionInFlight.current = false;
     }
-  }, [audio, dispatch, exposeVerifiedCompletion, persistFinalizedAttempt, persistLocalCompletedTake, playCompletionBell]);
+  }, [audio, challengeAttempt, dispatch, exposeVerifiedCompletion, persistFinalizedAttempt, persistLocalCompletedTake, playCompletionBell]);
 
   const cancelActiveRecording = useCallback(async () => {
     const currentState = useRecordingStore.getState();
@@ -584,6 +647,10 @@ export default function AudioProofScreen() {
       await audio.deleteRecording(uri);
     } else if (retainedCompletedTake?.localUri) {
       await audio.deleteRecording(retainedCompletedTake.localUri);
+    }
+    const ownerId = retainedCompletedTake?.ownerId ?? recordingOwnerIdRef.current;
+    if (ownerId) {
+      await deleteSavedDrop(retainedCompletedTake?.savedDropId ?? takeIdentityLifecycleRef.current.identity.clientAttemptId, ownerId);
     }
     await clearLocalCompletedTake();
     await clearUnclaimedAttempt();
@@ -805,6 +872,7 @@ export default function AudioProofScreen() {
     startInFlight.current = true;
     setIsStarting(true);
     setActionError(null);
+    void trackEvent('recording_started', { dedupeKey: `recording-started:${takeIdentityLifecycleRef.current.identity.clientAttemptId}` });
     if (hasRetainedTake && options?.replaceRetainedTake) {
       try {
         await deleteRetainedCompletedTake(recordingUri);
@@ -1070,6 +1138,31 @@ export default function AudioProofScreen() {
     }
   }, [currentAttempt, micFlowSavePromptVisible, requiresNewDropAfterDevLogin, serverAttemptId]);
 
+  const shareDrop = useCallback(async () => {
+    if (shareInFlightRef.current) {
+      return;
+    }
+    shareInFlightRef.current = true;
+    try {
+      const attemptId = serverAttemptId ?? await claimUnclaimedAttempt(currentAttempt);
+      if (typeof attemptId !== 'string') {
+        throw new Error('Finish account setup before sharing this challenge.');
+      }
+      setServerAttemptId(attemptId);
+      const challengeResult = await createChallenge({
+        attemptId,
+        category: topic.category,
+        durationSeconds: 30,
+        prompt: topic.prompt,
+      });
+      await shareDropCard({ prompt: topic.prompt, challengeUrl: challengeResult.url });
+    } catch (shareError) {
+      setActionError(shareError instanceof Error ? shareError.message : 'The challenge share could not be prepared.');
+    } finally {
+      shareInFlightRef.current = false;
+    }
+  }, [currentAttempt, serverAttemptId, topic.category, topic.prompt]);
+
   const handleDeveloperLogin = useCallback(() => {
     setRequiresNewDropAfterDevLogin(true);
     if (useRecordingStore.getState().state === 'completed') {
@@ -1161,11 +1254,13 @@ export default function AudioProofScreen() {
                     locked={Boolean(takeTwoBaselineRunId)}
                     onBegin={beginRecording}
                     onPermissionRetry={beginRecording}
+                    onUpgrade={() => setIsPlusPaywallVisible(true)}
                     onDeleteTakeAndStart={deleteTakeAndStart}
                     onKeepSavedTake={keepSavedTake}
                     prompt={topic.prompt}
                     retainedTakePromptVisible={retainedTakeStartPromptVisible || hasRetainedTakeAvailable}
                     selectedDuration={selectedDurationSeconds}
+                    plusEnabled={plusEnabled}
                     setDuration={(duration) => {
                       if (!takeTwoBaselineRunId) {
                         dispatch({ type: 'SELECT_DURATION', duration });
@@ -1268,6 +1363,7 @@ export default function AudioProofScreen() {
               })
             }
             onQuickRead={openQuickRead}
+            onShare={() => void shareDrop()}
             onRetry={() => void retryAttempt()}
             prompt={topic.prompt}
             recordingUri={recordingUri}
@@ -1337,6 +1433,10 @@ export default function AudioProofScreen() {
             setTakeTwoBaselineRunId(null);
           }
         }}
+        onOpenPlus={() => {
+          setIsQuickReadVisible(false);
+          setIsPlusPaywallVisible(true);
+        }}
         onTakeTwo={beginTakeTwo}
         prompt={topic.prompt}
         reducedMotion={reducedMotion}
@@ -1344,6 +1444,7 @@ export default function AudioProofScreen() {
         takeId={takeIdentity.clientAttemptId}
         visible={isQuickReadVisible}
       />
+      <PlusPaywall onClose={() => setIsPlusPaywallVisible(false)} visible={isPlusPaywallVisible} />
     </>
   );
 }
@@ -1403,9 +1504,11 @@ function DurationSelection({
   onDeleteTakeAndStart,
   onKeepSavedTake,
   onPermissionRetry,
+  onUpgrade,
   prompt,
   retainedTakePromptVisible,
   selectedDuration,
+  plusEnabled,
   setDuration,
   showPermissionRetry,
   stackedDurations,
@@ -1418,9 +1521,11 @@ function DurationSelection({
   onDeleteTakeAndStart: () => void;
   onKeepSavedTake: () => void;
   onPermissionRetry: () => void;
+  onUpgrade: () => void;
   prompt: string;
   retainedTakePromptVisible: boolean;
   selectedDuration: RecordingDuration;
+  plusEnabled: boolean;
   setDuration: (duration: RecordingDuration) => void;
   showPermissionRetry: boolean;
   stackedDurations: boolean;
@@ -1433,7 +1538,7 @@ function DurationSelection({
       <Text accessibilityRole="header" style={styles.sectionTitle}>Today’s Drop</Text>
       <PromptCard prompt={prompt} />
       {locked && <Text style={styles.lockedTakeNote}>TAKE TWO · SAME PROMPT AND CLOCK</Text>}
-      <DurationPicker disabled={locked} onChange={setDuration} selected={selectedDuration} stacked={stackedDurations} />
+      <DurationPicker disabled={locked} onChange={setDuration} onUpgrade={onUpgrade} plusEnabled={plusEnabled} selected={selectedDuration} stacked={stackedDurations} />
       {actionError && (
         <View style={styles.inlineNotice}>
           <Text style={styles.inlineNoticeText}>{actionError}</Text>
@@ -1618,6 +1723,7 @@ function CompletionView({
   onPause,
   onPlay,
   onQuickRead,
+  onShare,
   onRetry,
   prompt,
   recordingUri,
@@ -1634,6 +1740,7 @@ function CompletionView({
   onPause: () => void;
   onPlay: () => void;
   onQuickRead: () => Promise<boolean>;
+  onShare: () => void;
   onRetry: () => void;
   prompt: string;
   recordingUri: string;
@@ -1674,8 +1781,10 @@ function CompletionView({
         <Text style={styles.completionBody}>Drop Saved</Text>
         <Text accessibilityElementsHidden style={styles.recordingMetadata} testID="recording-uri">{recordingUri}</Text>
         <PromptCard prompt={prompt} />
+        <ShareCard prompt={prompt} />
         <View style={styles.actionStack}>
           <ActionButton disabled={quickReadStarting} label={quickReadStarting ? 'Starting Quick Read…' : 'Upload & get my Quick Read'} onPress={() => void startQuickRead()} />
+          <ActionButton label="Share a Challenge" onPress={onShare} secondary />
           <ActionButton label={isPlaybackPlaying ? 'Pause' : 'Play Drop'} onPress={isPlaybackPlaying ? onPause : onPlay} secondary />
           {!deleteConfirmationVisible ? (
             <View style={styles.secondaryRow}>

@@ -7,6 +7,10 @@ import { startQuickRead } from './quick-read-service';
 import { compareTakeTwo } from './take-two-service';
 import type { TakeTwoComparison } from '../../../supabase/functions/_shared/take-two';
 import { getPlusDisplayEligibility, subscribeToPlusDisplaySession } from '@/features/billing/plus-display';
+import { trackEvent } from '@/features/analytics/analytics';
+import { createChallenge } from '@/features/challenge/challenge-service';
+import { shareDropCard } from '@/features/share/share-service';
+import { ShareCard } from '@/features/share/ShareCard';
 import { DropWait } from '@/ui/DropWait';
 import type { QuickReadResult } from '../../../supabase/functions/_shared/quick-read-contract';
 
@@ -19,6 +23,7 @@ export function QuickReadFlow({
   audioUri,
   idempotencyKey,
   onClose,
+  onOpenPlus,
   onTakeTwo,
   prompt,
   reducedMotion = false,
@@ -32,6 +37,7 @@ export function QuickReadFlow({
   audioUri: string | null;
   idempotencyKey: string;
   onClose: () => void;
+  onOpenPlus?: () => void;
   onTakeTwo?: (baselineRunId: string) => void;
   prompt?: string;
   reducedMotion?: boolean;
@@ -52,6 +58,7 @@ export function QuickReadFlow({
   const runInFlight = useRef(false);
   const autoStartHandled = useRef(false);
   const takeTwoInFlight = useRef(false);
+  const shareInFlight = useRef(false);
   const onCloseRef = useRef(onClose);
   const sessionIdentity = useRef<{ initialized: boolean; userId: string | null }>({ initialized: false, userId: null });
 
@@ -130,6 +137,7 @@ export function QuickReadFlow({
     setPlusEligible(false);
     setError(null);
     setStep('processing');
+    void trackEvent('quick_read_requested', { dedupeKey: `quick-read-requested:${requestTakeId}` });
     try {
       const response = await startQuickRead({
         attemptId,
@@ -169,6 +177,7 @@ export function QuickReadFlow({
         });
       }
       setStep('result');
+      void trackEvent('quick_read_completed', { dedupeKey: `quick-read-completed:${requestTakeId}` });
     } catch (runError) {
       if (requestGeneration.current !== requestId || !isCurrentTake(requestTakeId, activeTakeId.current)) {
         return;
@@ -176,6 +185,7 @@ export function QuickReadFlow({
       runInFlight.current = false;
       setError(runError instanceof Error ? runError.message : "Quick Read couldn't finish.");
       setStep('error');
+      void trackEvent('quick_read_failed', { dedupeKey: `quick-read-failed:${requestTakeId}` });
     }
   }, [audioExtension, attemptId, audioUri, idempotencyKey, takeId, takeTwoBaselineRunId]);
 
@@ -198,6 +208,28 @@ export function QuickReadFlow({
     takeTwoInFlight.current = true;
     requestGeneration.current += 1;
     onTakeTwo(currentRunId);
+  };
+
+  const shareResult = async () => {
+    if (!currentResult || !prompt || shareInFlight.current) return;
+    shareInFlight.current = true;
+    try {
+      if (!attemptId) {
+        setError('Finish account setup before sharing this challenge.');
+        return;
+      }
+      const challenge = await createChallenge({ attemptId, prompt, durationSeconds: 30 });
+      await shareDropCard({
+        challengeUrl: challenge.url,
+        dropScore: calculateDropScore(currentResult),
+        prompt,
+        speakerVibe: currentResult.speakerVibe,
+      });
+    } catch (shareError) {
+      setError(shareError instanceof Error ? shareError.message : 'The share card could not be prepared.');
+    } finally {
+      shareInFlight.current = false;
+    }
   };
 
   return (
@@ -237,6 +269,7 @@ export function QuickReadFlow({
             <>
               <Text accessibilityRole="header" style={styles.title}>Here’s your Quick Read.</Text>
               <SpeakerVibeCard speakerVibe={currentResult.speakerVibe} />
+              <ShareCard dropScore={calculateDropScore(currentResult)} prompt={prompt ?? 'Your Drop'} speakerVibe={currentResult.speakerVibe} />
               <View accessibilityLabel="Quick Read scores" style={styles.scoreGrid}>
                 <Score label="Drop Score" value={calculateDropScore(currentResult)} />
                 <Score label="Clarity" value={Math.round(currentResult.clarity * 100)} />
@@ -247,6 +280,7 @@ export function QuickReadFlow({
               <FeedbackCard label="WHERE YOU NEED WORK" text={currentResult.improvement} />
               <FeedbackCard label="DROP DRILL" text={currentResult.nextDrill} />
               <Text style={styles.retentionNote}>Cloud audio was deleted after analysis. Transcript retention is limited to 30 days.</Text>
+              {!plusEligible && onOpenPlus && <FlowButton label="Unlock full Quick Read with Plus" onPress={onOpenPlus} secondary />}
               {!takeTwoBaselineRunId && plusEligible && currentRunId && (
                 <View accessibilityLabel="Take Two invitation" style={styles.takeTwoCard} testID="take-two-cta">
                   <Text accessibilityRole="header" style={styles.takeTwoTitle}>Take Two</Text>
@@ -261,6 +295,7 @@ export function QuickReadFlow({
                   prompt={prompt ?? 'Your original prompt'}
                 />
               )}
+              <FlowButton label="Share Result + Challenge" onPress={() => void shareResult()} secondary />
               <FlowButton label="Done" onPress={close} />
             </>
           )}

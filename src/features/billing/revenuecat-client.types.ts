@@ -4,6 +4,9 @@ export type RevenueCatClient = {
   logOut?: () => Promise<unknown>;
   getAppUserID: () => Promise<string>;
   getOfferings: () => Promise<unknown>;
+  purchasePackage?: (packageValue: unknown) => Promise<unknown>;
+  restorePurchases?: () => Promise<unknown>;
+  presentCustomerCenter?: () => Promise<void>;
 };
 
 export type RevenueCatClientPlatform = 'ios' | 'unsupported';

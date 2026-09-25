@@ -26,7 +26,7 @@ function isRecordingDuration(value: unknown): value is RecordingDuration {
   return value === 30 || value === 60 || value === 90;
 }
 
-function defaultFileExists(uri: string) {
+export function localCompletedTakeFileExists(uri: string) {
   if (Platform.OS === 'web') {
     return uri.startsWith('blob:');
   }
@@ -87,7 +87,7 @@ export async function saveAndVerifyLocalCompletedTake(
   take: LocalCompletedTake,
   options: { fileExists?: FileExists } = {},
 ) {
-  const existsBeforeWrite = await Promise.resolve((options.fileExists ?? defaultFileExists)(take.localUri));
+  const existsBeforeWrite = await Promise.resolve((options.fileExists ?? localCompletedTakeFileExists)(take.localUri));
   if (!existsBeforeWrite) {
     throw new Error('The completed recording file is not available to save.');
   }
@@ -111,7 +111,7 @@ export async function getLocalCompletedTake(
   if (!take || take.ownerId !== ownerId) {
     return null;
   }
-  const exists = await Promise.resolve((options.fileExists ?? defaultFileExists)(take.localUri));
+  const exists = await Promise.resolve((options.fileExists ?? localCompletedTakeFileExists)(take.localUri));
   return exists ? take : null;
 }
 

@@ -14,4 +14,7 @@ export const revenueCatClient: RevenueCatClient = {
   logIn: unsupportedAsync,
   getAppUserID: unsupportedAsync,
   getOfferings: unsupportedAsync,
+  purchasePackage: unsupportedAsync,
+  restorePurchases: unsupportedAsync,
+  presentCustomerCenter: unsupportedAsync,
 };

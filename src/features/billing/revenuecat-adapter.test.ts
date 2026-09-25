@@ -21,7 +21,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function client() {
+function client(): any {
   return {
     configure: jest.fn(),
     logIn: jest.fn(async () => ({ customerInfo: {}, created: false })),
@@ -218,5 +218,38 @@ describe('RevenueCat identity adapter', () => {
     const invalid = client();
     const invalidAdapter = createRevenueCatAdapter({ client: invalid, platform: 'ios', apiKey: 'test_key' });
     await expect(invalidAdapter.reconcileIdentity(session('not-a-uuid'))).resolves.toEqual({ available: false, reason: 'invalid_user' });
+  });
+
+  it('purchases only a package from the current trusted offering', async () => {
+    const purchases = client();
+    const purchasePackage = jest.fn(async () => ({ customerInfo: {} }));
+    purchases.purchasePackage = purchasePackage;
+    purchases.getOfferings.mockResolvedValue({ current: { availablePackages: [{ identifier: 'annual' }] } });
+    const adapter = createRevenueCatAdapter({ client: purchases, platform: 'ios', apiKey: 'test_key' });
+    await adapter.reconcileIdentity(session(userA));
+
+    await expect(adapter.purchasePackage?.(session(userA), 'annual')).resolves.toEqual({ ok: true });
+    expect(purchasePackage).toHaveBeenCalledWith({ identifier: 'annual' });
+  });
+
+  it('distinguishes a cancelled purchase from a failed purchase', async () => {
+    const purchases = client();
+    const cancellation = { code: 'PURCHASE_CANCELLED_ERROR' };
+    purchases.purchasePackage = jest.fn(async () => { throw cancellation; });
+    purchases.getOfferings.mockResolvedValue({ current: { availablePackages: [{ identifier: 'annual' }] } });
+    const adapter = createRevenueCatAdapter({ client: purchases, platform: 'ios', apiKey: 'test_key' });
+    await adapter.reconcileIdentity(session(userA));
+
+    await expect(adapter.purchasePackage?.(session(userA), 'annual')).resolves.toEqual({ ok: false, reason: 'purchase_cancelled' });
+  });
+
+  it('supports restore and fails closed when billing is unavailable', async () => {
+    const purchases = client();
+    purchases.restorePurchases = jest.fn(async () => ({ customerInfo: {} }));
+    const adapter = createRevenueCatAdapter({ client: purchases, platform: 'ios', apiKey: 'test_key' });
+    await adapter.reconcileIdentity(session(userA));
+    await expect(adapter.restorePurchases?.(session(userA))).resolves.toEqual({ ok: true });
+    adapter.clearAppOwnedBillingAvailability();
+    await expect(adapter.restorePurchases?.(session(userA))).resolves.toEqual({ ok: false, reason: 'billing_unavailable' });
   });
 });
