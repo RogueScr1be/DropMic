@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import Head from 'expo-router/head';
 
 import { ChallengeServiceError, resolveChallenge } from '@/features/challenge/challenge-service';
 import { trackEvent } from '@/features/analytics/analytics';
@@ -29,7 +30,7 @@ export default function ChallengeLandingScreen() {
     });
   }, [token]);
 
-  return <SafeAreaView style={styles.safe}><View style={styles.page}>
+  return <><Head><meta name="robots" content="noindex, nofollow" /></Head><SafeAreaView style={styles.safe}><View style={styles.page}>
     <Text style={styles.kicker}>DROPMIC CHALLENGE</Text>
     <Text accessibilityRole="header" style={styles.title}>Your voice is up.</Text>
     {status === 'loading' && <Text style={styles.body}>Loading the prompt…</Text>}
@@ -40,7 +41,7 @@ export default function ChallengeLandingScreen() {
       <Pressable accessibilityRole="button" accessibilityLabel="Take the Challenge" onPress={() => { void trackEvent('challenge_accepted'); router.replace({ pathname: '/', params: { challenge: token } }); }} style={styles.primary}><Text style={styles.primaryText}>Take the Challenge</Text></Pressable>
     </>}
     <Text style={styles.footer}>Daily speaking reps with a dare mechanic.</Text>
-  </View></SafeAreaView>;
+  </View></SafeAreaView></>;
 }
 
 const styles = StyleSheet.create({
