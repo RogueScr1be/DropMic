@@ -107,6 +107,10 @@ export const TOPIC_CATALOG: readonly SpeakingTopic[] = [
   },
 ] as const;
 
+export function getTopicById(topicId: string) {
+  return TOPIC_CATALOG.find((topic) => topic.id === topicId) ?? null;
+}
+
 function normalizeSeed(seed: number) {
   return Math.abs(Math.trunc(seed)) % TOPIC_CATALOG.length;
 }

@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { beforeEach, describe, expect, it } from '@jest/globals';
 
+import { isChallengeShareEligible } from '@/features/challenge/challenge-share-action';
 import { LOCAL_COMPLETED_TAKE_KEY, LOCAL_COMPLETED_TAKE_VERSION, type LocalCompletedTake } from './local-completed-take';
 import {
   clearSavedDrops,
@@ -18,7 +19,7 @@ const base: LocalCompletedTake = {
   clientAttemptId: 'client-1',
   completedAt: '2026-09-24T12:00:00.000Z',
   completedDurationSeconds: 30,
-  localUri: 'file:///local/drop.m4a',
+  localUri: 'file:///mock/document/ExpoAudio/drop.m4a',
   ownerId: 'owner-1',
   prompt: 'What did you learn?',
   quickReadIdempotencyKey: 'quick-read-1',
@@ -40,6 +41,50 @@ describe('Saved Drop library', () => {
 
     await expect(getSavedDrops('owner-1', { fileExists: () => true })).resolves.toEqual([drop()]);
     await expect(AsyncStorage.getItem(SAVED_DROPS_KEY)).resolves.toContain('client-1');
+  });
+
+  it('rebases a legacy absolute URI and stores only the safe filename', async () => {
+    const legacyDrop = drop({ localUri: 'file:///obsolete/container/Documents/ExpoAudio/drop.m4a' });
+    await AsyncStorage.setItem(SAVED_DROPS_KEY, JSON.stringify([legacyDrop]));
+
+    await expect(getSavedDrops('owner-1', { fileExists: (uri) => uri === base.localUri })).resolves.toEqual([drop()]);
+    const stored = JSON.parse((await AsyncStorage.getItem(SAVED_DROPS_KEY)) as string) as SavedDrop[];
+    expect(stored[0]?.localUri).toBe('drop.m4a');
+  });
+
+  it('preserves challenge eligibility after successful hydration', async () => {
+    await AsyncStorage.setItem(SAVED_DROPS_KEY, JSON.stringify([drop()]));
+    const [hydrated] = await getSavedDrops('owner-1', { fileExists: () => true });
+
+    expect(isChallengeShareEligible({
+      authenticatedUserId: hydrated?.ownerId ?? null,
+      category: 'Personal Growth',
+      durationSeconds: hydrated?.selectedDurationSeconds ?? null,
+      localUriMatches: true,
+      persisted: Boolean(hydrated),
+      prompt: hydrated?.prompt ?? null,
+      recordingCompleted: true,
+      recordingUri: hydrated?.localUri ?? null,
+      savedDropOwnerId: hydrated?.ownerId ?? null,
+    })).toBe(true);
+  });
+
+  it('keeps metadata when the rebased audio file is missing', async () => {
+    await AsyncStorage.setItem(SAVED_DROPS_KEY, JSON.stringify([drop({ localUri: 'file:///obsolete/drop.m4a' })]));
+
+    await expect(getSavedDrops('owner-1', { fileExists: () => false })).resolves.toEqual([]);
+    await expect(AsyncStorage.getItem(SAVED_DROPS_KEY)).resolves.toContain('file:///obsolete/drop.m4a');
+  });
+
+  it.each([
+    '../drop.m4a',
+    'file:///tmp/drop.wav',
+    'https://example.com/drop.m4a',
+  ])('rejects unsafe stored recording path %s without deleting metadata', async (localUri) => {
+    await AsyncStorage.setItem(SAVED_DROPS_KEY, JSON.stringify([drop({ localUri })]));
+
+    await expect(getSavedDrops('owner-1', { fileExists: () => true })).resolves.toEqual([]);
+    await expect(AsyncStorage.getItem(SAVED_DROPS_KEY)).resolves.toContain(localUri);
   });
 
   it('keeps three free Drops and rejects the fourth without changing prior data', async () => {

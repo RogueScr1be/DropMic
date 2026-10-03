@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { File, Paths } from 'expo-file-system';
 
 import {
   LOCAL_COMPLETED_TAKE_KEY,
@@ -15,6 +16,66 @@ export type SavedDrop = LocalCompletedTake & {
 };
 
 type FileExists = (uri: string) => boolean | Promise<boolean>;
+type RecordingUriResolver = (fileName: string) => string;
+
+const RECORDING_DIRECTORY = 'ExpoAudio';
+const SAFE_RECORDING_FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*\.m4a$/i;
+
+function defaultRecordingUriResolver(fileName: string) {
+  return new File(Paths.document, RECORDING_DIRECTORY, fileName).uri;
+}
+
+function fileNameFromStoredUri(uri: string) {
+  if (uri.startsWith('blob:')) {
+    return null;
+  }
+
+  const candidate = uri.startsWith('file://')
+    ? (() => {
+      try {
+        const parsed = new URL(uri);
+        if (parsed.protocol !== 'file:' || parsed.host || parsed.search || parsed.hash) {
+          return '';
+        }
+        const pathname = decodeURIComponent(parsed.pathname);
+        const segments = pathname.split('/');
+        if (segments.includes('.') || segments.includes('..')) {
+          return '';
+        }
+        return segments.at(-1) ?? '';
+      } catch {
+        return '';
+      }
+    })()
+    : uri.includes('/') || uri.includes('\\')
+      ? ''
+      : uri;
+
+  return SAFE_RECORDING_FILE_NAME.test(candidate) ? candidate : null;
+}
+
+function persistedRecordingUri(uri: string) {
+  if (uri.startsWith('blob:')) {
+    return uri;
+  }
+  return fileNameFromStoredUri(uri);
+}
+
+async function hydrateDrop(
+  drop: SavedDrop,
+  fileExists: FileExists,
+  resolveRecordingUri: RecordingUriResolver,
+) {
+  const resolvedUri = drop.localUri.startsWith('blob:')
+    ? drop.localUri
+    : fileNameFromStoredUri(drop.localUri)
+      ? resolveRecordingUri(fileNameFromStoredUri(drop.localUri) as string)
+      : null;
+  if (!resolvedUri || !(await Promise.resolve(fileExists(resolvedUri)))) {
+    return null;
+  }
+  return { ...drop, localUri: resolvedUri };
+}
 
 export class SavedDropLimitError extends Error {
   constructor(limit = FREE_SAVED_DROP_LIMIT) {
@@ -71,7 +132,7 @@ function sameDrop(left: SavedDrop, right: SavedDrop) {
     left.savedDropId === right.savedDropId &&
     left.clientAttemptId === right.clientAttemptId &&
     left.completedAt === right.completedAt &&
-    left.localUri === right.localUri &&
+    persistedRecordingUri(left.localUri) === persistedRecordingUri(right.localUri) &&
     left.ownerId === right.ownerId &&
     left.prompt === right.prompt &&
     left.quickReadIdempotencyKey === right.quickReadIdempotencyKey &&
@@ -81,39 +142,58 @@ function sameDrop(left: SavedDrop, right: SavedDrop) {
   );
 }
 
-async function readAll(fileExists: FileExists | undefined): Promise<SavedDrop[]> {
+async function readAll(
+  fileExists: FileExists | undefined,
+  resolveRecordingUri: RecordingUriResolver = defaultRecordingUriResolver,
+): Promise<SavedDrop[]> {
   const stored = parseSavedDrops(await AsyncStorage.getItem(SAVED_DROPS_KEY));
   const owners = new Map<string, SavedDrop[]>();
+  const normalizedStored: SavedDrop[] = [];
+  const available: SavedDrop[] = [];
   for (const drop of stored) {
+    const hydrated = await hydrateDrop(drop, fileExists ?? localCompletedTakeFileExists, resolveRecordingUri);
+    if (!hydrated) {
+      normalizedStored.push(drop);
+      const ownerDrops = owners.get(drop.ownerId) ?? [];
+      ownerDrops.push(drop);
+      owners.set(drop.ownerId, ownerDrops);
+      continue;
+    }
+    normalizedStored.push(persistDropForStorage(hydrated));
+    available.push(hydrated);
     const ownerDrops = owners.get(drop.ownerId) ?? [];
-    ownerDrops.push(drop);
+    ownerDrops.push(hydrated);
     owners.set(drop.ownerId, ownerDrops);
+  }
+  if (JSON.stringify(normalizedStored) !== JSON.stringify(stored)) {
+    await AsyncStorage.setItem(SAVED_DROPS_KEY, JSON.stringify(normalizedStored));
   }
 
   // The previous launch stored one record under the legacy key. Migrate it
   // into the array only after the file still exists and the owner matches.
   const legacyRaw = await AsyncStorage.getItem(LOCAL_COMPLETED_TAKE_KEY);
-  const legacy = legacyRaw ? await parseLegacyTake(legacyRaw, fileExists) : null;
+  const legacy = legacyRaw
+    ? await parseLegacyTake(legacyRaw, fileExists, resolveRecordingUri)
+    : null;
   if (legacy) {
     const migrated: SavedDrop = { ...legacy, savedDropId: legacy.clientAttemptId };
     const ownerDrops = owners.get(migrated.ownerId) ?? [];
     if (!ownerDrops.some((drop) => drop.savedDropId === migrated.savedDropId)) {
       ownerDrops.push(migrated);
       owners.set(migrated.ownerId, ownerDrops);
-      await AsyncStorage.setItem(SAVED_DROPS_KEY, JSON.stringify([...owners.values()].flat()));
+      available.push(migrated);
+      await AsyncStorage.setItem(SAVED_DROPS_KEY, JSON.stringify([...owners.values()].flat().map(persistDropForStorage)));
     }
   }
 
-  const result: SavedDrop[] = [];
-  for (const drop of [...owners.values()].flat()) {
-    if (!fileExists || await Promise.resolve(fileExists(drop.localUri))) {
-      result.push(drop);
-    }
-  }
-  return result.sort(newestFirst);
+  return available.sort(newestFirst);
 }
 
-async function parseLegacyTake(raw: string, fileExists: FileExists | undefined): Promise<LocalCompletedTake | null> {
+async function parseLegacyTake(
+  raw: string,
+  fileExists: FileExists | undefined,
+  resolveRecordingUri: RecordingUriResolver,
+): Promise<LocalCompletedTake | null> {
   try {
     const parsed = JSON.parse(raw) as Partial<LocalCompletedTake>;
     if (
@@ -133,10 +213,12 @@ async function parseLegacyTake(raw: string, fileExists: FileExists | undefined):
     ) {
       return null;
     }
-    if (fileExists && !(await Promise.resolve(fileExists(parsed.localUri)))) {
-      return null;
-    }
-    return parsed as LocalCompletedTake;
+    const hydrated = await hydrateDrop(
+      { ...parsed, savedDropId: parsed.clientAttemptId } as SavedDrop,
+      fileExists ?? localCompletedTakeFileExists,
+      resolveRecordingUri,
+    );
+    return hydrated ? hydrated : null;
   } catch {
     return null;
   }
@@ -144,24 +226,33 @@ async function parseLegacyTake(raw: string, fileExists: FileExists | undefined):
 
 export async function getSavedDrops(
   ownerId: string | null,
-  options: { fileExists?: FileExists } = {},
+  options: { fileExists?: FileExists; resolveRecordingUri?: RecordingUriResolver } = {},
 ): Promise<SavedDrop[]> {
   if (!ownerId) {
     return [];
   }
-  return (await readAll(options.fileExists ?? localCompletedTakeFileExists)).filter((drop) => drop.ownerId === ownerId);
+  return (await readAll(options.fileExists, options.resolveRecordingUri)).filter((drop) => drop.ownerId === ownerId);
+}
+
+function persistDropForStorage(drop: SavedDrop): SavedDrop {
+  const storedUri = persistedRecordingUri(drop.localUri);
+  return storedUri ? { ...drop, localUri: storedUri } : drop;
 }
 
 export async function saveAndVerifySavedDrop(
   drop: SavedDrop,
-  options: { fileExists?: FileExists; plus?: boolean; limit?: number } = {},
+  options: { fileExists?: FileExists; plus?: boolean; limit?: number; resolveRecordingUri?: RecordingUriResolver } = {},
 ) {
   const fileExists = options.fileExists ?? localCompletedTakeFileExists;
   if (!(await Promise.resolve(fileExists(drop.localUri)))) {
     throw new Error('The completed recording file is not available to save.');
   }
 
-  const stored = await readAll(fileExists);
+  if (!persistedRecordingUri(drop.localUri)) {
+    throw new Error('The completed recording path is not a supported local audio file.');
+  }
+
+  const stored = await readAll(fileExists, options.resolveRecordingUri);
   const existingIndex = stored.findIndex((item) => item.savedDropId === drop.savedDropId && item.ownerId === drop.ownerId);
   const ownerCount = stored.filter((item) => item.ownerId === drop.ownerId).length;
   const limit = options.limit ?? FREE_SAVED_DROP_LIMIT;
@@ -170,10 +261,13 @@ export async function saveAndVerifySavedDrop(
   }
 
   const next = existingIndex >= 0
-    ? stored.map((item, index) => (index === existingIndex ? drop : item))
-    : [...stored, drop];
+    ? stored.map((item, index) => (index === existingIndex ? drop : item)).map(persistDropForStorage)
+    : [...stored, drop].map(persistDropForStorage);
   await AsyncStorage.setItem(SAVED_DROPS_KEY, JSON.stringify(next));
-  const verified = (await getSavedDrops(drop.ownerId, options)).find((item) => item.savedDropId === drop.savedDropId);
+  const verified = (await getSavedDrops(drop.ownerId, {
+    fileExists,
+    resolveRecordingUri: options.resolveRecordingUri,
+  })).find((item) => item.savedDropId === drop.savedDropId);
   if (!verified || !sameDrop(verified, drop)) {
     throw new Error('The Saved Drop could not be verified after saving.');
   }
