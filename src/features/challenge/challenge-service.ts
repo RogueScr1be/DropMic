@@ -7,8 +7,6 @@ import {
   type PublicChallenge,
 } from '../../../supabase/functions/_shared/challenge-contract';
 
-export const CHALLENGE_WEB_ORIGIN = process.env.EXPO_PUBLIC_DROPMIC_WEB_ORIGIN?.trim() ?? '';
-
 export class ChallengeServiceError extends Error {
   code: 'not_configured' | 'auth_required' | 'create_failed' | 'resolve_failed' | 'expired' | 'invalid';
 
@@ -18,6 +16,32 @@ export class ChallengeServiceError extends Error {
     this.code = code;
   }
 }
+
+const CANONICAL_CHALLENGE_WEB_ORIGIN = 'https://thedropmic.com';
+
+function normalizeChallengeWebOrigin(origin: string) {
+  let parsed: URL;
+  try {
+    parsed = new URL(origin.trim());
+  } catch {
+    throw new ChallengeServiceError('The challenge web origin is invalid.', 'invalid');
+  }
+  if (
+    parsed.origin !== CANONICAL_CHALLENGE_WEB_ORIGIN ||
+    parsed.pathname !== '/' ||
+    parsed.search ||
+    parsed.hash ||
+    parsed.username ||
+    parsed.password
+  ) {
+    throw new ChallengeServiceError('The challenge web origin is invalid.', 'invalid');
+  }
+  return CANONICAL_CHALLENGE_WEB_ORIGIN;
+}
+
+export const CHALLENGE_WEB_ORIGIN = normalizeChallengeWebOrigin(
+  process.env.EXPO_PUBLIC_DROPMIC_WEB_ORIGIN?.trim() || CANONICAL_CHALLENGE_WEB_ORIGIN,
+);
 
 function client() {
   if (!isSupabaseConfigured || !supabase) {
@@ -30,7 +54,7 @@ export function buildChallengeUrl(token: string, origin = CHALLENGE_WEB_ORIGIN) 
   if (!token || !/^[A-Za-z0-9_-]{24,}$/u.test(token)) {
     throw new ChallengeServiceError('The challenge token is invalid.', 'invalid');
   }
-  return origin ? `${origin.replace(/\/$/u, '')}/challenge/${token}` : `micdrop://challenge/${token}`;
+  return `${normalizeChallengeWebOrigin(origin)}/challenge/${encodeURIComponent(token)}`;
 }
 
 export async function createChallenge(input: {
