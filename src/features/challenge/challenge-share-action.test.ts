@@ -1,9 +1,10 @@
 import React from 'react';
-import { describe, expect, it, jest } from '@jest/globals';
+import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { act, create } from 'react-test-renderer';
+import { Alert } from 'react-native';
 
-import { ChallengeShareAction } from './ChallengeShareAction';
-import { createAndShareChallenge, isChallengeShareEligible, type ChallengeShareInput } from './challenge-share-action';
+import { ChallengeRecoveryAction, ChallengeShareAction } from './ChallengeShareAction';
+import { createAndShareChallenge, createPersistAndShareChallenge, isChallengeShareEligible, type ChallengeShareInput } from './challenge-share-action';
 
 const input: ChallengeShareInput = {
   attemptId: 'attempt-1',
@@ -114,6 +115,39 @@ describe('ChallengeShareAction', () => {
   });
 });
 
+describe('ChallengeRecoveryAction', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('requires one explicit warning confirmation before rotating', async () => {
+    let buttons: any[] = [];
+    jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, nextButtons) => {
+      buttons = nextButtons ?? [];
+    });
+    const onRecover = jest.fn(async () => undefined);
+    let tree: ReturnType<typeof create>;
+    act(() => {
+      tree = create(React.createElement(ChallengeRecoveryAction, {
+        onError: jest.fn(),
+        onRecover,
+      }));
+    });
+
+    await act(async () => {
+      tree!.root.findByProps({ testID: 'regenerate-share-link-button' }).props.onPress();
+    });
+
+    expect(Alert.alert).toHaveBeenCalledTimes(1);
+    expect(onRecover).not.toHaveBeenCalled();
+    const regenerate = buttons.find((button) => button.text === 'Regenerate Share Link');
+    await act(async () => {
+      regenerate.onPress();
+    });
+    expect(onRecover).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('createAndShareChallenge', () => {
   it('passes only public challenge fields to creation and sharing', async () => {
     const createChallenge = jest.fn(async (value: ChallengeShareInput) => {
@@ -137,5 +171,47 @@ describe('createAndShareChallenge', () => {
 
     await expect(createAndShareChallenge(input, { createChallenge, shareDropCard })).rejects.toThrow('create failed');
     expect(shareDropCard).not.toHaveBeenCalled();
+  });
+
+  it('persists the canonical URL before opening the share sheet', async () => {
+    const order: string[] = [];
+    const createChallenge = jest.fn(async () => ({
+      challengeId: 'challenge-1',
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      url: 'https://thedropmic.com/challenge/opaque-token',
+    }));
+    const persistChallengeLink = jest.fn(async () => {
+      order.push('persist');
+    });
+    const shareDropCard = jest.fn(async () => {
+      order.push('share');
+    });
+
+    await createPersistAndShareChallenge(input, 'owner-1', { createChallenge, persistChallengeLink, shareDropCard });
+
+    expect(persistChallengeLink).toHaveBeenCalledWith(expect.objectContaining({
+      ownerId: 'owner-1',
+      attemptId: input.attemptId,
+      challengeId: 'challenge-1',
+      url: 'https://thedropmic.com/challenge/opaque-token',
+    }));
+    expect(order).toEqual(['persist', 'share']);
+  });
+
+  it('retains the persisted URL when the share sheet is cancelled', async () => {
+    const persistChallengeLink = jest.fn(async () => undefined);
+    const shareDropCard = jest.fn(async () => { throw new Error('share cancelled'); });
+
+    await expect(createPersistAndShareChallenge(input, 'owner-1', {
+      createChallenge: jest.fn(async () => ({
+        challengeId: 'challenge-1',
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        url: 'https://thedropmic.com/challenge/opaque-token',
+      })),
+      persistChallengeLink,
+      shareDropCard,
+    })).rejects.toThrow('share cancelled');
+
+    expect(persistChallengeLink).toHaveBeenCalledTimes(1);
   });
 });

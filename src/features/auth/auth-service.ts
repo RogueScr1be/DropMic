@@ -238,6 +238,22 @@ export async function claimUnclaimedAttempt(attempt?: UnclaimedAttempt | null) {
   return result.data.id;
 }
 
+export async function getOwnedAttemptId(clientAttemptId: string) {
+  const client = requireClient();
+  const session = await getSession();
+  if (!session?.user || session.user.is_anonymous) {
+    return null;
+  }
+  const result = await client
+    .from('attempts')
+    .select('id')
+    .eq('client_attempt_id', clientAttemptId)
+    .eq('owner_id', session.user.id)
+    .maybeSingle();
+  throwIfError(result.error);
+  return typeof result.data?.id === 'string' ? result.data.id : null;
+}
+
 export async function claimChallengeAttempt(attempt: UnclaimedAttempt, challengeToken: string) {
   const client = requireClient();
   const session = await getSession();

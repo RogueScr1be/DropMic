@@ -5,7 +5,7 @@ import { useLocalSearchParams } from 'expo-router';
 import { SignupFlow } from '@/features/auth/SignupFlow';
 import { useAuthFlowStore } from '@/features/auth/auth-flow-store';
 import { clearUnclaimedAttempt, getUnclaimedAttempt, saveAndVerifyUnclaimedAttempt, type UnclaimedAttempt } from '@/features/auth/auth-recovery';
-import { claimChallengeAttempt, claimUnclaimedAttempt, getSession } from '@/features/auth/auth-service';
+import { claimChallengeAttempt, claimUnclaimedAttempt, getOwnedAttemptId, getSession } from '@/features/auth/auth-service';
 import { isSupabaseConfigured, supabase } from '@/features/auth/auth-client';
 import { useCompletionBell } from '@/features/completion/completion-sound';
 import { CompletionMark } from '@/features/completion/CompletionMark';
@@ -20,9 +20,10 @@ import {
 } from '@/features/mic-flow/mic-flow-service';
 import { MicFlowCard } from '@/features/mic-flow/MicFlowCard';
 import { trackEvent } from '@/features/analytics/analytics';
-import { ChallengeShareAction } from '@/features/challenge/ChallengeShareAction';
-import { createAndShareChallenge, isChallengeShareEligible } from '@/features/challenge/challenge-share-action';
-import { ChallengeServiceError, resolveChallenge } from '@/features/challenge/challenge-service';
+import { ChallengeRecoveryAction, ChallengeShareAction } from '@/features/challenge/ChallengeShareAction';
+import { createPersistAndShareChallenge, isChallengeShareEligible } from '@/features/challenge/challenge-share-action';
+import { ChallengeServiceError, findActiveChallengeForAttempt, resolveChallenge, rotateChallengeLink, type OwnerChallenge } from '@/features/challenge/challenge-service';
+import { getChallengeShareLink, saveChallengeShareLink, type ChallengeShareLinkRecord } from '@/features/challenge/challenge-share-storage';
 import {
   clearPendingChallenge,
   confirmPendingChallenge,
@@ -90,6 +91,7 @@ import { DurationPicker } from '@/ui/DurationPicker';
 import { PromptCard } from '@/ui/PromptCard';
 import { colors, radii, spacing, typography } from '@/ui/theme';
 import { ShareCard } from '@/features/share/ShareCard';
+import { shareDropCard } from '@/features/share/share-service';
 
 type ExperiencePhase = FirstUsePhase | 'interrupted' | 'error';
 
@@ -143,6 +145,10 @@ export default function AudioProofScreen() {
   const [retainedTakeStartPromptVisible, setRetainedTakeStartPromptVisible] = useState(false);
   const [retainedTakeHydrating, setRetainedTakeHydrating] = useState(true);
   const [requiresNewDropAfterDevLogin, setRequiresNewDropAfterDevLogin] = useState(false);
+  const [challengeShareLink, setChallengeShareLink] = useState<ChallengeShareLinkRecord | null>(null);
+  const [ownerChallenge, setOwnerChallenge] = useState<OwnerChallenge | null>(null);
+  const [challengeLinkReadyForClientAttempt, setChallengeLinkReadyForClientAttempt] = useState<string | null>(null);
+  const [challengeLinkActionInFlight, setChallengeLinkActionInFlight] = useState(false);
   const challengeHandledRef = useRef<string | null>(null);
   const challengeResolvingRef = useRef<string | null>(null);
   const playCompletionBell = useCompletionBell();
@@ -161,6 +167,7 @@ export default function AudioProofScreen() {
   const pendingMicFlowCompletionRef = useRef<{ input: MicFlowCompletion; identity: MicFlowRecordingIdentity; generation: number } | null>(null);
   const micFlowDecisionInFlight = useRef(false);
   const micFlowSnapshotRequestRef = useRef(0);
+  const challengeLinkHydrationRef = useRef(0);
   const micFlowSnapshotCoordinatorRef = useRef(createMicFlowSnapshotCoordinator());
   const discardTransientRecordingRef = useRef(audio.discardTransientRecording);
 
@@ -208,6 +215,26 @@ export default function AudioProofScreen() {
     recordingUri,
     savedDropOwnerId: retainedCompletedTake?.ownerId ?? null,
   });
+  const retainedSavedDropEligible = isChallengeShareEligible({
+    authenticatedUserId,
+    category: retainedChallengeMetadata?.category ?? null,
+    durationSeconds: retainedChallengeMetadata?.durationSeconds ?? null,
+    localUriMatches: Boolean(retainedCompletedTake),
+    persisted: Boolean(retainedCompletedTake),
+    prompt: retainedChallengeMetadata?.prompt ?? null,
+    recordingCompleted: true,
+    recordingUri: retainedCompletedTake?.localUri ?? null,
+    savedDropOwnerId: retainedCompletedTake?.ownerId ?? null,
+  });
+  const challengeLinkReady = Boolean(
+    authenticatedUserId &&
+    retainedCompletedTake &&
+    retainedCompletedTake.ownerId === authenticatedUserId &&
+    challengeLinkReadyForClientAttempt === retainedCompletedTake.clientAttemptId,
+  );
+  const challengeLinkHydrating = Boolean(authenticatedUserId && retainedCompletedTake && retainedCompletedTake.ownerId === authenticatedUserId) && !challengeLinkReady;
+  const activeChallengeShareLink = challengeLinkReady ? challengeShareLink : null;
+  const activeOwnerChallenge = challengeLinkReady ? ownerChallenge : null;
   const quickReadOwnsSettings = isQuickReadVisible;
   const settingsHidden = quickReadOwnsSettings || isAuthFlowVisible || isSettingsVisible || micFlowSavePromptVisible;
   const showSideFlow = false;
@@ -237,6 +264,46 @@ export default function AudioProofScreen() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    const requestId = ++challengeLinkHydrationRef.current;
+    let cancelled = false;
+    if (!authenticatedUserId || !retainedCompletedTake || retainedCompletedTake.ownerId !== authenticatedUserId) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void (async () => {
+      try {
+        const attemptId = serverAttemptId ?? await getOwnedAttemptId(retainedCompletedTake.clientAttemptId);
+        if (!attemptId) {
+          if (!cancelled && requestId === challengeLinkHydrationRef.current) {
+            setChallengeLinkReadyForClientAttempt(retainedCompletedTake.clientAttemptId);
+          }
+          return;
+        }
+        if (!serverAttemptId) {
+          setServerAttemptId(attemptId);
+        }
+        const storedLink = await getChallengeShareLink(authenticatedUserId, attemptId);
+        const activeChallenge = storedLink ? null : await findActiveChallengeForAttempt(attemptId);
+        if (cancelled || requestId !== challengeLinkHydrationRef.current) {
+          return;
+        }
+        setChallengeShareLink(storedLink);
+        setOwnerChallenge(activeChallenge);
+        setChallengeLinkReadyForClientAttempt(retainedCompletedTake.clientAttemptId);
+      } catch (error) {
+        if (!cancelled && requestId === challengeLinkHydrationRef.current) {
+          setActionError(error instanceof Error ? error.message : 'The existing challenge could not be verified.');
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [authenticatedUserId, retainedCompletedTake, serverAttemptId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1253,7 +1320,11 @@ export default function AudioProofScreen() {
   }, [currentAttempt, micFlowSavePromptVisible, requiresNewDropAfterDevLogin, serverAttemptId]);
 
   const shareSavedDrop = useCallback(async () => {
-    if (!challengeShareEligible || !retainedCompletedTake || !retainedChallengeMetadata) {
+    if (!challengeShareEligible || !retainedCompletedTake || !retainedChallengeMetadata || !authenticatedUserId) {
+      return;
+    }
+    if (activeChallengeShareLink) {
+      await shareDropCard({ prompt: retainedChallengeMetadata.prompt, challengeUrl: activeChallengeShareLink.url });
       return;
     }
     const requestTakeId = retainedCompletedTake.clientAttemptId;
@@ -1265,13 +1336,72 @@ export default function AudioProofScreen() {
       throw new Error('The saved Drop is not ready for challenge sharing.');
     }
     setServerAttemptId(attemptId);
-    await createAndShareChallenge({
+    const challenge = await createPersistAndShareChallenge({
       attemptId,
       category: retainedChallengeMetadata.category,
       durationSeconds: retainedChallengeMetadata.durationSeconds,
       prompt: retainedChallengeMetadata.prompt,
+    }, authenticatedUserId);
+    const persistedLink: ChallengeShareLinkRecord = {
+      version: 1,
+      ownerId: authenticatedUserId,
+      attemptId,
+      challengeId: challenge.challengeId as string,
+      url: challenge.url,
+      expiresAt: challenge.expiresAt,
+    };
+    setChallengeShareLink(persistedLink);
+    setOwnerChallenge({
+      id: persistedLink.challengeId,
+      attemptId,
+      prompt: retainedChallengeMetadata.prompt,
+      category: retainedChallengeMetadata.category,
+      durationSeconds: retainedChallengeMetadata.durationSeconds,
+      expiresAt: challenge.expiresAt,
     });
-  }, [challengeShareEligible, currentAttempt, retainedChallengeMetadata, retainedCompletedTake, serverAttemptId]);
+  }, [activeChallengeShareLink, authenticatedUserId, challengeShareEligible, currentAttempt, retainedChallengeMetadata, retainedCompletedTake, serverAttemptId]);
+
+  const shareExistingChallenge = useCallback(async () => {
+    if (!activeChallengeShareLink || !retainedChallengeMetadata) {
+      return;
+    }
+    await shareDropCard({ prompt: retainedChallengeMetadata.prompt, challengeUrl: activeChallengeShareLink.url });
+  }, [activeChallengeShareLink, retainedChallengeMetadata]);
+
+  const regenerateChallengeLink = useCallback(async () => {
+    if (challengeLinkActionInFlight || !authenticatedUserId || !retainedCompletedTake || !retainedChallengeMetadata) {
+      return;
+    }
+    setChallengeLinkActionInFlight(true);
+    try {
+      const attemptId = serverAttemptId ?? await getOwnedAttemptId(retainedCompletedTake.clientAttemptId);
+      if (!attemptId) {
+        throw new Error('The saved Drop is not ready for challenge-link recovery.');
+      }
+      const challenge = await rotateChallengeLink(attemptId);
+      const persistedLink: ChallengeShareLinkRecord = {
+        version: 1,
+        ownerId: authenticatedUserId,
+        attemptId,
+        challengeId: challenge.challengeId,
+        url: challenge.url,
+        expiresAt: challenge.expiresAt,
+      };
+      await saveChallengeShareLink(persistedLink);
+      setChallengeShareLink(persistedLink);
+      setOwnerChallenge({
+        id: challenge.challengeId,
+        attemptId,
+        prompt: challenge.prompt,
+        category: challenge.category,
+        durationSeconds: challenge.durationSeconds,
+        expiresAt: challenge.expiresAt,
+      });
+      await shareDropCard({ prompt: challenge.prompt, challengeUrl: challenge.url });
+    } finally {
+      setChallengeLinkActionInFlight(false);
+    }
+  }, [authenticatedUserId, challengeLinkActionInFlight, retainedChallengeMetadata, retainedCompletedTake, serverAttemptId]);
 
   const handleDeveloperLogin = useCallback(() => {
     setRequiresNewDropAfterDevLogin(true);
@@ -1282,6 +1412,13 @@ export default function AudioProofScreen() {
 
   const retainedTakeCard = recoveryPresentation === 'retained-take' ? (
     <RetainedTakeCard
+      challengeAction={(
+        retainedSavedDropEligible && !challengeLinkHydrating && activeChallengeShareLink ? (
+          <ChallengeShareAction eligible mode="reuse" onError={setActionError} onShare={shareExistingChallenge} />
+        ) : retainedSavedDropEligible && !challengeLinkHydrating && activeOwnerChallenge ? (
+          <ChallengeRecoveryAction disabled={challengeLinkActionInFlight} onError={setActionError} onRecover={regenerateChallengeLink} />
+        ) : null
+      )}
       onResume={() => {
         if (hasHiddenCompletedTake) {
           setCompletedTakeHidden(false);
@@ -1481,7 +1618,8 @@ export default function AudioProofScreen() {
             reducedMotion={reducedMotion}
             challengeCategory={retainedChallengeMetadata?.category ?? null}
             challengeDurationSeconds={retainedChallengeMetadata?.durationSeconds ?? null}
-            shareChallengeEligible={challengeShareEligible}
+            shareChallengeEligible={challengeShareEligible && !challengeLinkHydrating && (!activeOwnerChallenge || Boolean(activeChallengeShareLink))}
+            shareChallengeMode={activeChallengeShareLink ? 'reuse' : 'create'}
           />
                 )}
               </View>
@@ -1692,7 +1830,7 @@ function DurationSelection({
   );
 }
 
-function RetainedTakeCard({ onResume }: { onResume: () => void }) {
+function RetainedTakeCard({ challengeAction, onResume }: { challengeAction: ReactNode; onResume: () => void }) {
   return (
     <View
       accessibilityLabel="Saved take card"
@@ -1709,6 +1847,7 @@ function RetainedTakeCard({ onResume }: { onResume: () => void }) {
           onPress={onResume}
           secondary
         />
+        {challengeAction}
       </View>
     </View>
   );
@@ -1846,6 +1985,7 @@ function CompletionView({
   recordingUri,
   reducedMotion,
   shareChallengeEligible,
+  shareChallengeMode,
 }: {
   challengeCategory: string | null;
   challengeDurationSeconds: RecordingDuration | null;
@@ -1867,6 +2007,7 @@ function CompletionView({
   recordingUri: string;
   reducedMotion: boolean;
   shareChallengeEligible: boolean;
+  shareChallengeMode: 'create' | 'reuse';
 }) {
   const [deleteConfirmationVisible, setDeleteConfirmationVisible] = useState(false);
   const [quickReadStarting, setQuickReadStarting] = useState(false);
@@ -1911,7 +2052,7 @@ function CompletionView({
         <ShareCard prompt={prompt} />
         <View style={styles.actionStack}>
           <ActionButton disabled={quickReadStarting} label={quickReadStarting ? 'Starting Quick Read…' : 'Upload & get my Quick Read'} onPress={() => void startQuickRead()} />
-          <ChallengeShareAction eligible={shareChallengeEligible} onError={onShareError} onShare={onShare} />
+          <ChallengeShareAction eligible={shareChallengeEligible} mode={shareChallengeMode} onError={onShareError} onShare={onShare} />
           <ActionButton label={isPlaybackPlaying ? 'Pause' : 'Play Drop'} onPress={isPlaybackPlaying ? onPause : onPlay} secondary />
           {!deleteConfirmationVisible ? (
             <View style={styles.secondaryRow}>

@@ -60,9 +60,9 @@ Deno.serve(async (request) => {
     duration_seconds: durationSeconds,
     expires_at: new Date(now.getTime() + expiresInHours * 60 * 60 * 1000).toISOString(),
   };
-  const { data, error } = await admin.from('challenge_links').insert({ ...row, source_attempt_id: attempt.id }).select('prompt,category,duration_seconds,created_at,expires_at,status').single();
+  const { data, error } = await admin.from('challenge_links').insert({ ...row, source_attempt_id: attempt.id }).select('id,prompt,category,duration_seconds,created_at,expires_at,status').single();
   if (error || !data) return json({ error: 'create_failed' }, 500);
   const challenge = toPublicChallenge(data, token);
   if (!challenge) return json({ error: 'create_failed' }, 500);
-  return json({ token, challenge });
+  return json({ token, challengeId: data.id, challenge });
 });

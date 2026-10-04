@@ -7,7 +7,7 @@ export const ANALYTICS_EVENTS = [
   'app_opened', 'prompt_viewed', 'recording_started', 'recording_completed',
   'quick_read_requested', 'quick_read_completed', 'quick_read_failed',
   'share_card_generated', 'native_share_sheet_opened', 'challenge_link_created',
-  'challenge_link_opened', 'challenge_accepted', 'challenge_recording_completed',
+  'challenge_link_rotated', 'challenge_link_opened', 'challenge_accepted', 'challenge_recording_completed',
   'paywall_viewed', 'product_selected', 'purchase_completed', 'purchase_cancelled',
   'purchase_failed', 'restore_completed', 'saved_drop_limit_reached',
 ] as const;

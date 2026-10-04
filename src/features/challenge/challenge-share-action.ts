@@ -1,6 +1,7 @@
 import { createChallenge } from './challenge-service';
 import { shareDropCard } from '@/features/share/share-service';
 import type { ChallengeDuration } from '../../../supabase/functions/_shared/challenge-contract';
+import { saveChallengeShareLink, type ChallengeShareLinkRecord } from './challenge-share-storage';
 
 export type ChallengeShareInput = {
   attemptId: string;
@@ -9,11 +10,16 @@ export type ChallengeShareInput = {
   durationSeconds: ChallengeDuration;
 };
 
-type ChallengeCreationResult = { url: string };
+type ChallengeCreationResult = {
+  url: string;
+  challengeId?: string | null;
+  expiresAt?: string;
+};
 
 export type ChallengeShareDependencies = {
   createChallenge: (input: ChallengeShareInput) => Promise<ChallengeCreationResult>;
   shareDropCard: (input: { prompt: string; challengeUrl: string }) => Promise<unknown>;
+  persistChallengeLink?: (record: ChallengeShareLinkRecord) => Promise<unknown>;
 };
 
 export type ChallengeShareEligibilityInput = {
@@ -48,4 +54,27 @@ export async function createAndShareChallenge(
 ) {
   const challenge = await dependencies.createChallenge(input);
   await dependencies.shareDropCard({ prompt: input.prompt, challengeUrl: challenge.url });
+}
+
+export async function createPersistAndShareChallenge(
+  input: ChallengeShareInput,
+  ownerId: string,
+  dependencies: ChallengeShareDependencies & {
+    persistChallengeLink: (record: ChallengeShareLinkRecord) => Promise<unknown>;
+  } = { createChallenge, shareDropCard, persistChallengeLink: saveChallengeShareLink },
+): Promise<ChallengeCreationResult & { challengeId: string; expiresAt: string }> {
+  const challenge = await dependencies.createChallenge(input);
+  if (!challenge.challengeId || !challenge.expiresAt) {
+    throw new Error('The challenge link could not be persisted safely.');
+  }
+  await dependencies.persistChallengeLink({
+    version: 1,
+    ownerId,
+    attemptId: input.attemptId,
+    challengeId: challenge.challengeId,
+    url: challenge.url,
+    expiresAt: challenge.expiresAt,
+  });
+  await dependencies.shareDropCard({ prompt: input.prompt, challengeUrl: challenge.url });
+  return challenge as ChallengeCreationResult & { challengeId: string; expiresAt: string };
 }
