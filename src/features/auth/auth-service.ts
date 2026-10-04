@@ -238,6 +238,32 @@ export async function claimUnclaimedAttempt(attempt?: UnclaimedAttempt | null) {
   return result.data.id;
 }
 
+export async function claimChallengeAttempt(attempt: UnclaimedAttempt, challengeToken: string) {
+  const client = requireClient();
+  const session = await getSession();
+  if (!session?.user) {
+    throw new AuthServiceError('Your session expired. Your local response is still recoverable.');
+  }
+  const result = await client.rpc('claim_challenge_attempt', {
+    p_client_attempt_id: attempt.clientAttemptId,
+    p_topic_id: attempt.topicId,
+    p_selected_duration_seconds: attempt.selectedDurationSeconds,
+    p_completed_duration_seconds: attempt.completedDurationSeconds,
+    p_completed_at: attempt.completedAt,
+    p_challenge_token: challengeToken,
+  });
+  throwIfError(result.error);
+  const payload = result.data as { status?: unknown; attempt_id?: unknown } | null;
+  if (payload?.status === 'creator_cannot_accept') {
+    throw new AuthServiceError('You cannot respond to your own challenge.');
+  }
+  if (payload?.status !== 'claimed' || typeof payload.attempt_id !== 'string') {
+    throw new AuthServiceError('This challenge response could not be saved. The challenge may have expired.');
+  }
+  await clearUnclaimedAttempt();
+  return payload.attempt_id;
+}
+
 export async function signOut() {
   const client = requireClient();
   const result = await client.auth.signOut({ scope: 'local' });

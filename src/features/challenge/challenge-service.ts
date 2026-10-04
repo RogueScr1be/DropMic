@@ -8,7 +8,7 @@ import {
 } from '../../../supabase/functions/_shared/challenge-contract';
 
 export class ChallengeServiceError extends Error {
-  code: 'not_configured' | 'auth_required' | 'create_failed' | 'resolve_failed' | 'expired' | 'invalid';
+  code: 'not_configured' | 'auth_required' | 'create_failed' | 'resolve_failed' | 'expired' | 'invalid' | 'creator_cannot_accept';
 
   constructor(message: string, code: ChallengeServiceError['code']) {
     super(message);
@@ -87,6 +87,9 @@ export async function resolveChallenge(token: string) {
   const payload = response.data as { challenge?: PublicChallenge; error?: string } | null;
   if (response.error || !payload?.challenge) {
     const code = payload?.error === 'expired' ? 'expired' : 'resolve_failed';
+    if (payload?.error === 'creator_cannot_accept') {
+      throw new ChallengeServiceError('You cannot take your own challenge.', 'creator_cannot_accept');
+    }
     throw new ChallengeServiceError(
       code === 'expired' ? 'This challenge has expired.' : 'This challenge is unavailable.',
       code,

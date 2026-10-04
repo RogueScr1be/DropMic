@@ -27,9 +27,16 @@ Deno.serve(async (request) => {
   const token = typeof input?.token === 'string' && /^[a-f0-9]{64}$/u.test(input.token) ? input.token : null;
   if (!token) return json({ error: 'invalid' }, 400);
   const admin = createClient(url, serviceKey);
-  const { data, error } = await admin.from('challenge_links').select('prompt,category,duration_seconds,created_at,expires_at,status').eq('token_hash', await hashToken(token)).maybeSingle();
+  const { data, error } = await admin.from('challenge_links').select('owner_id,prompt,category,duration_seconds,created_at,expires_at,status').eq('token_hash', await hashToken(token)).maybeSingle();
   if (error || !data) return json({ error: 'invalid' }, 404);
   const challenge = toPublicChallenge(data, token);
   if (!challenge) return json({ error: data.status === 'active' ? 'expired' : 'disabled' }, 410);
+  const authorization = request.headers.get('Authorization');
+  const anonKey = Deno.env.get('SUPABASE_ANON_KEY');
+  if (authorization && anonKey) {
+    const userClient = createClient(url, anonKey, { global: { headers: { Authorization: authorization } } });
+    const { data: userResult } = await userClient.auth.getUser();
+    if (userResult.user?.id === data.owner_id) return json({ error: 'creator_cannot_accept' }, 403);
+  }
   return json({ challenge });
 });

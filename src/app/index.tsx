@@ -5,7 +5,7 @@ import { useLocalSearchParams } from 'expo-router';
 import { SignupFlow } from '@/features/auth/SignupFlow';
 import { useAuthFlowStore } from '@/features/auth/auth-flow-store';
 import { clearUnclaimedAttempt, getUnclaimedAttempt, saveAndVerifyUnclaimedAttempt, type UnclaimedAttempt } from '@/features/auth/auth-recovery';
-import { claimUnclaimedAttempt, getSession } from '@/features/auth/auth-service';
+import { claimChallengeAttempt, claimUnclaimedAttempt, getSession } from '@/features/auth/auth-service';
 import { isSupabaseConfigured, supabase } from '@/features/auth/auth-client';
 import { useCompletionBell } from '@/features/completion/completion-sound';
 import { CompletionMark } from '@/features/completion/CompletionMark';
@@ -22,7 +22,13 @@ import { MicFlowCard } from '@/features/mic-flow/MicFlowCard';
 import { trackEvent } from '@/features/analytics/analytics';
 import { ChallengeShareAction } from '@/features/challenge/ChallengeShareAction';
 import { createAndShareChallenge, isChallengeShareEligible } from '@/features/challenge/challenge-share-action';
-import { resolveChallenge } from '@/features/challenge/challenge-service';
+import { ChallengeServiceError, resolveChallenge } from '@/features/challenge/challenge-service';
+import {
+  clearPendingChallenge,
+  confirmPendingChallenge,
+  getPendingChallenge,
+  savePendingChallenge,
+} from '@/features/challenge/challenge-routing';
 import { PlusPaywall } from '@/features/billing/PlusPaywall';
 import { bindRevenueCatSession } from '@/features/billing/revenuecat-session';
 import { getPlusDisplayEligibility } from '@/features/billing/plus-display';
@@ -91,7 +97,7 @@ const COMPLETION_HEADLINES = ['Great Job!'] as const;
 
 export default function AudioProofScreen() {
   const audio = useLocalAudioRecorder();
-  const { auth, challenge } = useLocalSearchParams<{ auth?: string; challenge?: string }>();
+  const { auth, challenge, challengeConfirmed } = useLocalSearchParams<{ auth?: string; challenge?: string; challengeConfirmed?: string }>();
   const reducedMotion = useReducedMotion();
   const recordingState = useRecordingStore((store) => store.state);
   const selectedDurationSeconds = useRecordingStore((store) => store.selectedDurationSeconds);
@@ -123,6 +129,7 @@ export default function AudioProofScreen() {
   const [isPlusPaywallVisible, setIsPlusPaywallVisible] = useState(false);
   const [plusEnabled, setPlusEnabled] = useState(false);
   const [challengeAttempt, setChallengeAttempt] = useState(false);
+  const [activeChallengeToken, setActiveChallengeToken] = useState<string | null>(null);
   const [authenticatedUserId, setAuthenticatedUserId] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
   const [takeIdentity, setTakeIdentity] = useState<TakeIdentity>(() => createTakeIdentity());
@@ -511,25 +518,63 @@ export default function AudioProofScreen() {
     setRetainedTakeStartPromptVisible(false);
   }, []);
 
-  useEffect(() => {
-    if (!challenge || challengeHandledRef.current === challenge || challengeResolvingRef.current === challenge || !splashElapsed || ageGateAccepted === null) {
+  const prepareChallenge = useCallback(async (token: string, recordAcceptance: boolean) => {
+    if (challengeHandledRef.current === token || challengeResolvingRef.current === token) {
       return;
     }
-    challengeResolvingRef.current = challenge;
-    void resolveChallenge(challenge).then((resolved) => {
-      challengeHandledRef.current = challenge;
+    challengeResolvingRef.current = token;
+    try {
+      const resolved = await resolveChallenge(token);
+      if (recordAcceptance) {
+        const confirmed = await confirmPendingChallenge(token);
+        if (!confirmed) {
+          await savePendingChallenge({ source: 'micdrop', token }, 'confirmed');
+        }
+      }
+      challengeHandledRef.current = token;
       challengeResolvingRef.current = null;
       beginNewTake();
+      setActiveChallengeToken(token);
       setChallengeAttempt(true);
       setTopic({ category: resolved.category ?? 'Challenge', id: 'challenge', prompt: resolved.prompt });
       dispatch({ type: 'SELECT_DURATION', duration: resolved.durationSeconds });
       setPhase('topic_reveal');
       void trackEvent('challenge_link_opened');
-    }).catch(() => {
+      if (recordAcceptance) {
+        void trackEvent('challenge_accepted');
+      }
+    } catch (reason) {
       challengeResolvingRef.current = null;
-      setActionError('This challenge is no longer available. Try a fresh Drop instead.');
+      await clearPendingChallenge();
+      setActionError(
+        reason instanceof ChallengeServiceError
+          ? reason.message
+          : 'This challenge is no longer available. Try a fresh Drop instead.',
+      );
+    }
+  }, [beginNewTake, dispatch]);
+
+  useEffect(() => {
+    if (challengeConfirmed !== '1' || !challenge || !splashElapsed || ageGateAccepted === null) {
+      return;
+    }
+    void Promise.resolve().then(() => prepareChallenge(challenge, true));
+  }, [ageGateAccepted, challenge, challengeConfirmed, prepareChallenge, splashElapsed]);
+
+  useEffect(() => {
+    if (challenge || !splashElapsed || ageGateAccepted === null) {
+      return;
+    }
+    let cancelled = false;
+    void getPendingChallenge().then((pending) => {
+      if (!cancelled && pending?.state === 'confirmed') {
+        void prepareChallenge(pending.token, false);
+      }
     });
-  }, [ageGateAccepted, beginNewTake, challenge, dispatch, splashElapsed]);
+    return () => {
+      cancelled = true;
+    };
+  }, [ageGateAccepted, challenge, prepareChallenge, splashElapsed]);
 
   const showRetainedCompletedTake = useCallback((take: LocalCompletedTake) => {
     const catalogTopic = getTopicById(take.topicId);
@@ -629,6 +674,12 @@ export default function AudioProofScreen() {
         const completedAtMsForAttempt = Date.now();
         await persistLocalCompletedTake(uri, completedAtMsForAttempt, activeElapsedMs);
         const savedAttempt = await persistFinalizedAttempt(completedAtMsForAttempt, activeElapsedMs);
+        if (challengeAttempt) {
+          if (!activeChallengeToken) {
+            throw new Error('The challenge response could not be identified safely.');
+          }
+          await claimChallengeAttempt(savedAttempt, activeChallengeToken);
+        }
         if (operationId !== operationGeneration.current || useRecordingStore.getState().state !== 'completing') {
           return;
         }
@@ -640,6 +691,9 @@ export default function AudioProofScreen() {
         void trackEvent('recording_completed', { dedupeKey: `recording-completed:${savedAttempt.clientAttemptId}` });
         if (challengeAttempt) {
           void trackEvent('challenge_recording_completed', { dedupeKey: `challenge-recording-completed:${savedAttempt.clientAttemptId}` });
+          void clearPendingChallenge();
+          setActiveChallengeToken(null);
+          setChallengeAttempt(false);
         }
       } else {
         dispatch({ type: 'FAILURE', message: 'The recording did not produce a local file.' });
@@ -654,7 +708,7 @@ export default function AudioProofScreen() {
     } finally {
       completionInFlight.current = false;
     }
-  }, [audio, challengeAttempt, dispatch, exposeVerifiedCompletion, persistFinalizedAttempt, persistLocalCompletedTake, playCompletionBell]);
+  }, [activeChallengeToken, audio, challengeAttempt, dispatch, exposeVerifiedCompletion, persistFinalizedAttempt, persistLocalCompletedTake, playCompletionBell]);
 
   const cancelActiveRecording = useCallback(async () => {
     const currentState = useRecordingStore.getState();
@@ -732,6 +786,12 @@ export default function AudioProofScreen() {
       const completedAtMsForAttempt = Date.now();
       await persistLocalCompletedTake(state.recordingUri, completedAtMsForAttempt, state.elapsedMs);
       const savedAttempt = await persistFinalizedAttempt(completedAtMsForAttempt, state.elapsedMs);
+      if (challengeAttempt) {
+        if (!activeChallengeToken) {
+          throw new Error('The challenge response could not be identified safely.');
+        }
+        await claimChallengeAttempt(savedAttempt, activeChallengeToken);
+      }
       if (operationId !== operationGeneration.current || useRecordingStore.getState().state !== 'completing') {
         return;
       }
@@ -740,6 +800,13 @@ export default function AudioProofScreen() {
       dispatch({ type: 'PERSISTENCE_CONFIRMED', completedAtMs: completedAtMsForAttempt });
       playCompletionBell(savedAttempt.clientAttemptId);
       exposeVerifiedCompletion(savedAttempt);
+      void trackEvent('recording_completed', { dedupeKey: `recording-completed:${savedAttempt.clientAttemptId}` });
+      if (challengeAttempt) {
+        void trackEvent('challenge_recording_completed', { dedupeKey: `challenge-recording-completed:${savedAttempt.clientAttemptId}` });
+        void clearPendingChallenge();
+        setActiveChallengeToken(null);
+        setChallengeAttempt(false);
+      }
       setActionError(null);
     } catch (saveError) {
       dispatch({
@@ -749,7 +816,7 @@ export default function AudioProofScreen() {
     } finally {
       completionInFlight.current = false;
     }
-  }, [audio, dispatch, exposeVerifiedCompletion, persistFinalizedAttempt, persistLocalCompletedTake, playCompletionBell]);
+  }, [activeChallengeToken, audio, challengeAttempt, dispatch, exposeVerifiedCompletion, persistFinalizedAttempt, persistLocalCompletedTake, playCompletionBell]);
 
   const retryCleanupRecording = useCallback(async () => {
     const state = useRecordingStore.getState();
@@ -1060,6 +1127,11 @@ export default function AudioProofScreen() {
 
   const chooseNewTopic = useCallback(() => {
     try {
+      if (activeChallengeToken) {
+        void clearPendingChallenge();
+        setActiveChallengeToken(null);
+        setChallengeAttempt(false);
+      }
       micFlowIdentityGenerationRef.current += 1;
       micFlowIdentityRef.current = null;
       pendingMicFlowCompletionRef.current = null;
@@ -1073,7 +1145,7 @@ export default function AudioProofScreen() {
       setActionError(null);
       setPhase('topic_reveal');
     }
-  }, [revealKey]);
+  }, [activeChallengeToken, revealKey]);
 
   const beginTakeTwo = useCallback((baselineRunId: string) => {
     if (!baselineRunId || takeTwoStartInFlight.current) {
