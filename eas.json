@@ -1,0 +1,11 @@
+{
+  "build": {
+    "internal": {
+      "distribution": "internal",
+      "developmentClient": false,
+      "ios": {
+        "simulator": false
+      }
+    }
+  }
+}
