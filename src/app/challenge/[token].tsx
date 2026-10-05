@@ -4,6 +4,8 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import Head from 'expo-router/head';
 
 import { ChallengeServiceError, resolveChallenge } from '@/features/challenge/challenge-service';
+import { ChallengeTransitionView } from '@/features/challenge/ChallengeTransitionView';
+import { type ChallengeTransitionStage } from '@/features/challenge/challenge-transition';
 import {
   buildNativeChallengeUrl,
   clearPendingChallenge,
@@ -26,6 +28,12 @@ export default function ChallengeLandingScreen() {
   const [launching, setLaunching] = useState(false);
   const [launchUnavailable, setLaunchUnavailable] = useState(false);
   const [confirming, setConfirming] = useState(false);
+
+  const reportTransitionStage = (stage: ChallengeTransitionStage) => {
+    if (__DEV__) {
+      console.info(`[DropMic] challenge transition: ${stage}`);
+    }
+  };
 
   useEffect(() => {
     const fallbackToken = typeof token === 'string'
@@ -98,15 +106,19 @@ export default function ChallengeLandingScreen() {
       return;
     }
     setConfirming(true);
+    reportTransitionStage('confirmation_pressed');
     try {
       const confirmed = await confirmPendingChallenge(routeToken);
       if (!confirmed) {
         await savePendingChallenge({ source: 'micdrop', token: routeToken }, 'confirmed');
       }
+      reportTransitionStage('pending_state_saved');
+      reportTransitionStage('root_transition_started');
       router.replace({ pathname: '/', params: { challenge: routeToken, challengeConfirmed: '1' } });
     } catch {
       setError('This challenge could not be prepared. Try the link again.');
       setConfirming(false);
+      reportTransitionStage('transition_failed');
     }
   };
 
@@ -176,6 +188,19 @@ export default function ChallengeLandingScreen() {
       <Text style={styles.footer}>Daily speaking reps with a dare mechanic.</Text>
     </View></SafeAreaView>
   </>;
+}
+
+export function ErrorBoundary({ retry }: { retry: () => void }) {
+  return (
+    <ChallengeTransitionView
+      onDismiss={retry}
+      state={{
+        message: 'DropMic could not display this challenge safely.',
+        stage: 'transition_failed',
+        status: 'error',
+      }}
+    />
+  );
 }
 
 function NativeChallengeConfirmation({

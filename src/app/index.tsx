@@ -1,6 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState, Animated, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 
 import { SignupFlow } from '@/features/auth/SignupFlow';
 import { useAuthFlowStore } from '@/features/auth/auth-flow-store';
@@ -21,8 +21,16 @@ import {
 import { MicFlowCard } from '@/features/mic-flow/MicFlowCard';
 import { trackEvent } from '@/features/analytics/analytics';
 import { ChallengeRecoveryAction, ChallengeShareAction } from '@/features/challenge/ChallengeShareAction';
+import { ChallengeTransitionView } from '@/features/challenge/ChallengeTransitionView';
 import { createPersistAndShareChallenge, isChallengeShareEligible } from '@/features/challenge/challenge-share-action';
-import { ChallengeServiceError, findActiveChallengeForAttempt, resolveChallenge, rotateChallengeLink, type OwnerChallenge } from '@/features/challenge/challenge-service';
+import { findActiveChallengeForAttempt, resolveChallenge, rotateChallengeLink, type OwnerChallenge } from '@/features/challenge/challenge-service';
+import {
+  challengePreparationError,
+  isChallengeDestinationCommitted,
+  shouldStartChallengePreparation,
+  type ChallengePreparationState,
+  type ChallengeTransitionStage,
+} from '@/features/challenge/challenge-transition';
 import { getChallengeShareLink, saveChallengeShareLink, type ChallengeShareLinkRecord } from '@/features/challenge/challenge-share-storage';
 import {
   clearPendingChallenge,
@@ -100,6 +108,7 @@ const COMPLETION_HEADLINES = ['Great Job!'] as const;
 export default function AudioProofScreen() {
   const audio = useLocalAudioRecorder();
   const { auth, challenge, challengeConfirmed } = useLocalSearchParams<{ auth?: string; challenge?: string; challengeConfirmed?: string }>();
+  const router = useRouter();
   const reducedMotion = useReducedMotion();
   const recordingState = useRecordingStore((store) => store.state);
   const selectedDurationSeconds = useRecordingStore((store) => store.selectedDurationSeconds);
@@ -149,8 +158,15 @@ export default function AudioProofScreen() {
   const [ownerChallenge, setOwnerChallenge] = useState<OwnerChallenge | null>(null);
   const [challengeLinkReadyForClientAttempt, setChallengeLinkReadyForClientAttempt] = useState<string | null>(null);
   const [challengeLinkActionInFlight, setChallengeLinkActionInFlight] = useState(false);
+  const [challengePreparation, setChallengePreparation] = useState<ChallengePreparationState>(() => (
+    challengeConfirmed === '1' && challenge
+      ? { stage: 'root_transition_started', status: 'preparing' }
+      : { status: 'idle' }
+  ));
   const challengeHandledRef = useRef<string | null>(null);
   const challengeResolvingRef = useRef<string | null>(null);
+  const challengePreparationGenerationRef = useRef(0);
+  const challengeAcceptanceTelemetryRef = useRef<string | null>(null);
   const playCompletionBell = useCompletionBell();
   const stopInFlight = useRef(false);
   const completionInFlight = useRef(false);
@@ -585,18 +601,36 @@ export default function AudioProofScreen() {
     setRetainedTakeStartPromptVisible(false);
   }, []);
 
+  const reportChallengeTransitionStage = useCallback((stage: ChallengeTransitionStage) => {
+    if (__DEV__) {
+      console.info(`[DropMic] challenge transition: ${stage}`);
+    }
+  }, []);
+
   const prepareChallenge = useCallback(async (token: string, recordAcceptance: boolean) => {
-    if (challengeHandledRef.current === token || challengeResolvingRef.current === token) {
+    if (!shouldStartChallengePreparation(token, challengeHandledRef.current, challengeResolvingRef.current)) {
       return;
     }
+    const generation = challengePreparationGenerationRef.current + 1;
+    challengePreparationGenerationRef.current = generation;
     challengeResolvingRef.current = token;
+    setChallengePreparation({ stage: 'challenge_resolution_started', status: 'preparing' });
+    reportChallengeTransitionStage('challenge_resolution_started');
     try {
       const resolved = await resolveChallenge(token);
+      if (challengePreparationGenerationRef.current !== generation) {
+        return;
+      }
+      reportChallengeTransitionStage('challenge_resolution_succeeded');
       if (recordAcceptance) {
         const confirmed = await confirmPendingChallenge(token);
         if (!confirmed) {
           await savePendingChallenge({ source: 'micdrop', token }, 'confirmed');
         }
+        reportChallengeTransitionStage('pending_state_saved');
+      }
+      if (challengePreparationGenerationRef.current !== generation) {
+        return;
       }
       challengeHandledRef.current = token;
       challengeResolvingRef.current = null;
@@ -606,20 +640,16 @@ export default function AudioProofScreen() {
       setTopic({ category: resolved.category ?? 'Challenge', id: 'challenge', prompt: resolved.prompt });
       dispatch({ type: 'SELECT_DURATION', duration: resolved.durationSeconds });
       setPhase('topic_reveal');
-      void trackEvent('challenge_link_opened');
-      if (recordAcceptance) {
-        void trackEvent('challenge_accepted');
-      }
+      setChallengePreparation({ status: 'ready' });
     } catch (reason) {
+      if (challengePreparationGenerationRef.current !== generation) {
+        return;
+      }
       challengeResolvingRef.current = null;
-      await clearPendingChallenge();
-      setActionError(
-        reason instanceof ChallengeServiceError
-          ? reason.message
-          : 'This challenge is no longer available. Try a fresh Drop instead.',
-      );
+      setChallengePreparation({ message: challengePreparationError(reason), stage: 'transition_failed', status: 'error' });
+      reportChallengeTransitionStage('transition_failed');
     }
-  }, [beginNewTake, dispatch]);
+  }, [beginNewTake, dispatch, reportChallengeTransitionStage]);
 
   useEffect(() => {
     if (challengeConfirmed !== '1' || !challenge || !splashElapsed || ageGateAccepted === null) {
@@ -642,6 +672,31 @@ export default function AudioProofScreen() {
       cancelled = true;
     };
   }, [ageGateAccepted, challenge, prepareChallenge, splashElapsed]);
+
+  useEffect(() => {
+    const transitionToken = challenge ?? activeChallengeToken;
+    if (!transitionToken || !isChallengeDestinationCommitted(challengePreparation, displayedPhase)) {
+      return;
+    }
+    if (challengeAcceptanceTelemetryRef.current === transitionToken) {
+      return;
+    }
+    challengeAcceptanceTelemetryRef.current = transitionToken;
+    void clearPendingChallenge();
+    void trackEvent('challenge_link_opened');
+    if (challengeConfirmed === '1') {
+      void trackEvent('challenge_accepted');
+    }
+    reportChallengeTransitionStage('destination_committed');
+  }, [activeChallengeToken, challenge, challengeConfirmed, challengePreparation, displayedPhase, reportChallengeTransitionStage]);
+
+  const dismissChallengePreparation = useCallback(() => {
+    challengePreparationGenerationRef.current += 1;
+    challengeResolvingRef.current = null;
+    void clearPendingChallenge();
+    setChallengePreparation({ status: 'idle' });
+    router.replace('/');
+  }, [router]);
 
   const showRetainedCompletedTake = useCallback((take: LocalCompletedTake) => {
     const catalogTopic = getTopicById(take.topicId);
@@ -1429,6 +1484,10 @@ export default function AudioProofScreen() {
     />
   ) : null;
 
+  if (challengePreparation.status === 'preparing' || challengePreparation.status === 'error') {
+    return <ChallengeTransitionView onDismiss={dismissChallengePreparation} state={challengePreparation} />;
+  }
+
   if (displayedPhase === 'splash') {
     return <SplashReveal reducedMotion={reducedMotion} />;
   }
@@ -1698,6 +1757,19 @@ export default function AudioProofScreen() {
       />
       <PlusPaywall onClose={() => setIsPlusPaywallVisible(false)} visible={isPlusPaywallVisible} />
     </>
+  );
+}
+
+export function ErrorBoundary({ retry }: { retry: () => void }) {
+  return (
+    <ChallengeTransitionView
+      onDismiss={retry}
+      state={{
+        message: 'DropMic could not display this challenge safely.',
+        stage: 'transition_failed',
+        status: 'error',
+      }}
+    />
   );
 }
 
