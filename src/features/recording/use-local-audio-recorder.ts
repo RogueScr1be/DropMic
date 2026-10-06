@@ -9,7 +9,7 @@ import {
   useAudioRecorderState,
   RecordingPresets,
 } from 'expo-audio';
-import { File } from 'expo-file-system';
+import { Directory, File, Paths } from 'expo-file-system';
 import {
   configureAutomaticAudioMode,
   configureExplicitPlaybackAudioMode,
@@ -46,6 +46,7 @@ export function useLocalAudioRecorder() {
   const deletePromises = useRef(new Map<string, Promise<void>>());
   const finalizePromise = useRef<Promise<string | null> | null>(null);
   const discardPromise = useRef<Promise<void> | null>(null);
+  const finalizedFileSequence = useRef(0);
 
   useEffect(() => {
     void getRecordingPermissionsAsync().then((permission) => setPermissionGranted(permission.granted));
@@ -121,7 +122,25 @@ export function useLocalAudioRecorder() {
         await recorder.stop();
         recorderStopped = true;
         recorderPhase.current = 'finalized';
-        finalizedUri.current = recorder.uri;
+        const recorderUri = recorder.uri;
+        if (recorderUri && Platform.OS !== 'web') {
+          const source = new File(recorderUri);
+          if (source.exists) {
+            const directory = new Directory(Paths.document, 'ExpoAudio');
+            directory.create({ idempotent: true, intermediates: true });
+            finalizedFileSequence.current += 1;
+            const destination = new File(
+              directory,
+              `drop-${Date.now()}-${finalizedFileSequence.current}.m4a`,
+            );
+            await source.move(destination);
+            finalizedUri.current = destination.uri;
+          } else {
+            finalizedUri.current = recorderUri;
+          }
+        } else {
+          finalizedUri.current = recorderUri;
+        }
       }
       if (recorderStopped) {
         await configureAutomaticAudioMode().catch(() => undefined);

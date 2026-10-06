@@ -22,6 +22,14 @@ import { MicFlowCard } from '@/features/mic-flow/MicFlowCard';
 import { trackEvent } from '@/features/analytics/analytics';
 import { ChallengeRecoveryAction, ChallengeShareAction } from '@/features/challenge/ChallengeShareAction';
 import { ChallengeTransitionView } from '@/features/challenge/ChallengeTransitionView';
+import {
+  clearChallengeAttemptSession,
+  getChallengeAttemptSession,
+  markChallengeAcceptanceRecorded,
+  saveChallengeAttemptSession,
+  shouldPreserveChallengeAttemptOnBackground,
+  shouldRecordChallengeAcceptance,
+} from '@/features/challenge/challenge-attempt-session';
 import { createPersistAndShareChallenge, isChallengeShareEligible } from '@/features/challenge/challenge-share-action';
 import { findActiveChallengeForAttempt, resolveChallenge, rotateChallengeLink, type OwnerChallenge } from '@/features/challenge/challenge-service';
 import {
@@ -634,11 +642,27 @@ export default function AudioProofScreen() {
       }
       challengeHandledRef.current = token;
       challengeResolvingRef.current = null;
-      beginNewTake();
+      const restoredSession = await getChallengeAttemptSession(token);
+      const nextIdentity = restoredSession?.identity ?? createTakeIdentity();
+      beginNewTake(null, nextIdentity);
       setActiveChallengeToken(token);
       setChallengeAttempt(true);
-      setTopic({ category: resolved.category ?? 'Challenge', id: 'challenge', prompt: resolved.prompt });
-      dispatch({ type: 'SELECT_DURATION', duration: resolved.durationSeconds });
+      const nextTopic = {
+        category: restoredSession?.category ?? resolved.category ?? 'Challenge',
+        id: 'challenge',
+        prompt: restoredSession?.prompt ?? resolved.prompt,
+      };
+      setTopic(nextTopic);
+      const nextDuration = restoredSession?.durationSeconds ?? resolved.durationSeconds;
+      dispatch({ type: 'SELECT_DURATION', duration: nextDuration });
+      await saveChallengeAttemptSession({
+        acceptanceRecorded: restoredSession?.acceptanceRecorded ?? false,
+        category: nextTopic.category,
+        durationSeconds: nextDuration,
+        identity: nextIdentity,
+        prompt: nextTopic.prompt,
+        token,
+      });
       setPhase('topic_reveal');
       setChallengePreparation({ status: 'ready' });
     } catch (reason) {
@@ -682,11 +706,17 @@ export default function AudioProofScreen() {
       return;
     }
     challengeAcceptanceTelemetryRef.current = transitionToken;
-    void clearPendingChallenge();
     void trackEvent('challenge_link_opened');
-    if (challengeConfirmed === '1') {
-      void trackEvent('challenge_accepted');
-    }
+    void (async () => {
+      const session = await getChallengeAttemptSession(transitionToken);
+      if (!shouldRecordChallengeAcceptance(challengeConfirmed === '1', session?.acceptanceRecorded ?? false)) {
+        return;
+      }
+      const marked = session ? await markChallengeAcceptanceRecorded(transitionToken) : true;
+      if (marked) {
+        void trackEvent('challenge_accepted');
+      }
+    })();
     reportChallengeTransitionStage('destination_committed');
   }, [activeChallengeToken, challenge, challengeConfirmed, challengePreparation, displayedPhase, reportChallengeTransitionStage]);
 
@@ -694,6 +724,7 @@ export default function AudioProofScreen() {
     challengePreparationGenerationRef.current += 1;
     challengeResolvingRef.current = null;
     void clearPendingChallenge();
+    void clearChallengeAttemptSession();
     setChallengePreparation({ status: 'idle' });
     router.replace('/');
   }, [router]);
@@ -814,6 +845,7 @@ export default function AudioProofScreen() {
         if (challengeAttempt) {
           void trackEvent('challenge_recording_completed', { dedupeKey: `challenge-recording-completed:${savedAttempt.clientAttemptId}` });
           void clearPendingChallenge();
+          void clearChallengeAttemptSession();
           setActiveChallengeToken(null);
           setChallengeAttempt(false);
         }
@@ -847,6 +879,12 @@ export default function AudioProofScreen() {
         return;
       }
       dispatch({ type: 'CLEANUP_SUCCEEDED' });
+      if (challengeAttempt) {
+        void clearPendingChallenge();
+        void clearChallengeAttemptSession();
+        setActiveChallengeToken(null);
+        setChallengeAttempt(false);
+      }
       beginNewTake(takeTwoBaselineRunId);
       setPhase('duration_selection');
       setActionError(null);
@@ -858,7 +896,7 @@ export default function AudioProofScreen() {
     } finally {
       cleanupInFlight.current = false;
     }
-  }, [audio, beginNewTake, dispatch, takeTwoBaselineRunId]);
+  }, [audio, beginNewTake, challengeAttempt, dispatch, takeTwoBaselineRunId]);
 
   const deleteRetainedCompletedTake = useCallback(async (uri: string | null = recordingUri) => {
     if (uri) {
@@ -926,6 +964,7 @@ export default function AudioProofScreen() {
       if (challengeAttempt) {
         void trackEvent('challenge_recording_completed', { dedupeKey: `challenge-recording-completed:${savedAttempt.clientAttemptId}` });
         void clearPendingChallenge();
+        void clearChallengeAttemptSession();
         setActiveChallengeToken(null);
         setChallengeAttempt(false);
       }
@@ -1045,13 +1084,15 @@ export default function AudioProofScreen() {
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
-      if (nextState !== 'active' && isInterruptibleState(recordingState)) {
+      if (nextState !== 'active' && shouldPreserveChallengeAttemptOnBackground(challengeAttempt, recordingState)) {
+        void stopRecording();
+      } else if (nextState !== 'active' && isInterruptibleState(recordingState)) {
         interruptRecording('The app left the foreground before the Drop finished.');
       }
     });
 
     return () => subscription.remove();
-  }, [interruptRecording, recordingState]);
+  }, [challengeAttempt, interruptRecording, recordingState, stopRecording]);
 
   useEffect(() => {
     if (displayedPhase !== 'countdown' || countdownStartedAtMs === null) {
@@ -1251,6 +1292,7 @@ export default function AudioProofScreen() {
     try {
       if (activeChallengeToken) {
         void clearPendingChallenge();
+        void clearChallengeAttemptSession();
         setActiveChallengeToken(null);
         setChallengeAttempt(false);
       }

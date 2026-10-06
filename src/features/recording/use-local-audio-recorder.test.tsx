@@ -27,6 +27,8 @@ const mockPlayer = {
 };
 
 const mockDeleteFile = jest.fn<() => Promise<void>>();
+const mockMoveFile = jest.fn<() => Promise<void>>();
+const mockCreateDirectory = jest.fn();
 const originalRevokeObjectURL = URL.revokeObjectURL;
 const originalPlatformOS = Platform.OS;
 
@@ -43,7 +45,17 @@ jest.mock('expo-audio', () => ({
 }));
 
 jest.mock('expo-file-system', () => ({
-  File: jest.fn().mockImplementation(() => ({ delete: mockDeleteFile })),
+  Directory: jest.fn().mockImplementation(() => ({
+    create: mockCreateDirectory,
+    uri: 'file:///documents/ExpoAudio',
+  })),
+  File: jest.fn().mockImplementation((...uris: unknown[]) => ({
+    delete: mockDeleteFile,
+    exists: true,
+    move: mockMoveFile,
+    uri: `${uris[0] && typeof uris[0] === 'object' && 'uri' in uris[0] ? uris[0].uri : uris[0]}${uris.length > 1 ? `/${uris.slice(1).join('/')}` : ''}`,
+  })),
+  Paths: { document: 'file:///documents' },
 }));
 
 function Harness({ expose }: { expose: (api: ReturnType<typeof useLocalAudioRecorder>) => void }) {
@@ -85,9 +97,28 @@ describe('useLocalAudioRecorder', () => {
     expect(mockRecorder.stop).toHaveBeenCalledTimes(1);
     expect(setAudioModeAsync).toHaveBeenNthCalledWith(1, RECORDING_AUDIO_MODE);
     expect(setAudioModeAsync).toHaveBeenLastCalledWith(AUTOMATIC_AUDIO_MODE);
-    expect(await api.finalize()).toBe('file:///drop.m4a');
+    expect(await api.finalize()).toMatch(/file:\/\/\/documents\/ExpoAudio\/drop-.*\.m4a/);
     expect(mockRecorder.prepareToRecordAsync).toHaveBeenCalledTimes(1);
     expect(mockRecorder.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('moves each finalized native recording to a unique document file', async () => {
+    let api!: ReturnType<typeof useLocalAudioRecorder>;
+    act(() => {
+      create(<Harness expose={(nextApi) => { api = nextApi; }} />);
+    });
+
+    let uri: string | null = null;
+    await act(async () => {
+      await api.prepare();
+      await api.start();
+      uri = await api.finalize();
+    });
+
+    expect(mockCreateDirectory).toHaveBeenCalledWith({ idempotent: true, intermediates: true });
+    expect(mockMoveFile).toHaveBeenCalledTimes(1);
+    expect(uri).toContain('file:///documents/ExpoAudio/drop-');
+    expect(uri).toMatch(/\.m4a$/);
   });
 
   it('loads the finalized URI into the player before playback', async () => {
@@ -104,8 +135,8 @@ describe('useLocalAudioRecorder', () => {
       await api.play(uri as string);
     });
 
-    expect(uri).toBe('file:///drop.m4a');
-    expect(mockPlayer.replace).toHaveBeenCalledWith('file:///drop.m4a');
+    expect(uri).toMatch(/file:\/\/\/documents\/ExpoAudio\/drop-.*\.m4a/);
+    expect(mockPlayer.replace).toHaveBeenCalledWith(uri);
     expect(mockPlayer.seekTo).toHaveBeenCalledWith(0);
     expect(mockPlayer.play).toHaveBeenCalledTimes(1);
     expect(setAudioModeAsync).toHaveBeenCalledWith(EXPLICIT_PLAYBACK_AUDIO_MODE);
@@ -145,7 +176,7 @@ describe('useLocalAudioRecorder', () => {
       uri = await api.finalize();
     });
 
-    expect(uri).toBe('file:///drop.m4a');
+    expect(uri).toMatch(/file:\/\/\/documents\/ExpoAudio\/drop-.*\.m4a/);
     expect(setAudioModeAsync).toHaveBeenLastCalledWith(AUTOMATIC_AUDIO_MODE);
   });
 

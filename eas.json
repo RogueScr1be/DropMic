@@ -3,6 +3,7 @@
     "internal": {
       "distribution": "internal",
       "developmentClient": false,
+      "environment": "production",
       "ios": {
         "simulator": false
       }
