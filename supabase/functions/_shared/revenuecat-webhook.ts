@@ -16,6 +16,24 @@ export type RevenueCatSnapshotResult =
   | { ownerId: string; hasEntitlement: true; snapshot: RevenueCatSnapshot }
   | { ownerId: string; hasEntitlement: false; snapshotAt: string };
 
+export const REVENUECAT_ENTITLEMENT_KEYS = [
+  'plus',
+  'pack.interview_pro',
+  'pack.founder_pitch',
+] as const;
+
+export type RevenueCatEntitlementKey = (typeof REVENUECAT_ENTITLEMENT_KEYS)[number];
+export type RevenueCatEntitlementSnapshot = {
+  entitlementKey: RevenueCatEntitlementKey;
+  hasEntitlement: boolean;
+  snapshot?: RevenueCatSnapshot;
+};
+export type RevenueCatEntitlementsSnapshot = {
+  ownerId: string;
+  snapshotAt: string;
+  entitlements: RevenueCatEntitlementSnapshot[];
+};
+
 type BillingEvent = {
   id: string;
   type: string;
@@ -29,8 +47,8 @@ type BillingEvent = {
 type WebhookDependencies = {
   authorization: string;
   appId: string;
-  getSnapshot: (ownerId: string) => Promise<RevenueCatSnapshotResult>;
-  applySnapshot: (event: { id: string; type: string; occurredAt: string }, result: RevenueCatSnapshotResult) => Promise<void>;
+  getSnapshot: (ownerId: string) => Promise<RevenueCatEntitlementsSnapshot>;
+  applySnapshot: (event: { id: string; type: string; occurredAt: string }, result: RevenueCatEntitlementsSnapshot) => Promise<void>;
   now?: () => Date;
 };
 
@@ -74,24 +92,24 @@ function uuidList(value: unknown): string[] {
   return value.filter(isUuid);
 }
 
-export function parseRevenueCatSubscriberSnapshot(ownerId: string, response: unknown, now = new Date()): RevenueCatSnapshotResult {
-  if (!isUuid(ownerId) || !response || typeof response !== 'object' || Array.isArray(response)) {
-    throw new Error('Invalid RevenueCat subscriber response.');
-  }
-  const root = response as Record<string, unknown>;
-  const subscriber = root.subscriber;
-  if (!subscriber || typeof subscriber !== 'object' || Array.isArray(subscriber)) throw new Error('Missing subscriber.');
-  const requestDate = typeof root.request_date === 'string' ? Date.parse(root.request_date) : Number.NaN;
+function parseSnapshotTime(response: Record<string, unknown>) {
+  const requestDate = typeof response.request_date === 'string' ? Date.parse(response.request_date) : Number.NaN;
   if (!Number.isFinite(requestDate)) throw new Error('Invalid subscriber snapshot time.');
-  const snapshotAt = new Date(requestDate).toISOString();
-  const entitlements = (subscriber as Record<string, unknown>).entitlements;
-  if (!entitlements || typeof entitlements !== 'object' || Array.isArray(entitlements)) {
-    return { ownerId, hasEntitlement: false, snapshotAt };
-  }
-  const plus = (entitlements as Record<string, unknown>).plus;
-  if (!plus || typeof plus !== 'object' || Array.isArray(plus)) return { ownerId, hasEntitlement: false, snapshotAt };
+  return new Date(requestDate).toISOString();
+}
 
-  const entitlement = plus as Record<string, unknown>;
+function parseEntitlementSnapshot(
+  entitlementKey: RevenueCatEntitlementKey,
+  ownerId: string,
+  value: unknown,
+  snapshotAt: string,
+  now: Date,
+): RevenueCatEntitlementSnapshot {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { entitlementKey, hasEntitlement: false };
+  }
+
+  const entitlement = value as Record<string, unknown>;
   const productId = typeof entitlement.product_identifier === 'string' ? entitlement.product_identifier.trim() : '';
   const startedAtMs = typeof entitlement.purchase_date === 'string' ? Date.parse(entitlement.purchase_date) : Number.NaN;
   const rawExpiry = entitlement.expires_date;
@@ -102,18 +120,18 @@ export function parseRevenueCatSubscriberSnapshot(ownerId: string, response: unk
     !productId || productId.length > 200 || !Number.isFinite(startedAtMs) ||
     (expiresAtMs !== null && !Number.isFinite(expiresAtMs)) ||
     (graceExpiryMs !== null && !Number.isFinite(graceExpiryMs))
-  ) throw new Error('Invalid Plus entitlement snapshot.');
+  ) throw new Error('Invalid RevenueCat entitlement snapshot.');
   if (!(now instanceof Date) || !Number.isFinite(now.getTime())) throw new Error('Invalid server clock.');
 
-  const activeLifetime = expiresAtMs === null;
-  const activeUntil = activeLifetime || expiresAtMs! > now.getTime();
+  const permanent = expiresAtMs === null;
+  const activeUntil = permanent || expiresAtMs! > now.getTime();
   const graceActive = expiresAtMs !== null && expiresAtMs! <= now.getTime() && graceExpiryMs !== null && graceExpiryMs > now.getTime();
   const status: RevenueCatSnapshot['status'] = activeUntil ? 'active' : graceActive ? 'grace' : 'expired';
-  const expiresAt = activeLifetime ? LIFETIME_EXPIRY : new Date(expiresAtMs!).toISOString();
+  const expiresAt = permanent ? LIFETIME_EXPIRY : new Date(expiresAtMs!).toISOString();
   const graceExpiresAt = graceExpiryMs === null ? null : new Date(graceExpiryMs).toISOString();
 
   return {
-    ownerId,
+    entitlementKey,
     hasEntitlement: true,
     snapshot: {
       ownerId,
@@ -125,6 +143,31 @@ export function parseRevenueCatSubscriberSnapshot(ownerId: string, response: unk
       snapshotAt,
     },
   };
+}
+
+export function parseRevenueCatSubscriberEntitlements(ownerId: string, response: unknown, now = new Date()): RevenueCatEntitlementsSnapshot {
+  if (!isUuid(ownerId) || !response || typeof response !== 'object' || Array.isArray(response)) {
+    throw new Error('Invalid RevenueCat subscriber response.');
+  }
+  const root = response as Record<string, unknown>;
+  const subscriber = root.subscriber;
+  if (!subscriber || typeof subscriber !== 'object' || Array.isArray(subscriber)) throw new Error('Missing subscriber.');
+  const snapshotAt = parseSnapshotTime(root);
+  const entitlements = (subscriber as Record<string, unknown>).entitlements;
+  if (!entitlements || typeof entitlements !== 'object' || Array.isArray(entitlements)) throw new Error('Missing subscriber entitlements.');
+  const source = entitlements as Record<string, unknown>;
+  return {
+    ownerId,
+    snapshotAt,
+    entitlements: REVENUECAT_ENTITLEMENT_KEYS.map((key) => parseEntitlementSnapshot(key, ownerId, source[key], snapshotAt, now)),
+  };
+}
+
+export function parseRevenueCatSubscriberSnapshot(ownerId: string, response: unknown, now = new Date()): RevenueCatSnapshotResult {
+  const snapshot = parseRevenueCatSubscriberEntitlements(ownerId, response, now);
+  const plus = snapshot.entitlements.find((entry) => entry.entitlementKey === 'plus');
+  if (!plus?.hasEntitlement || !plus.snapshot) return { ownerId, hasEntitlement: false, snapshotAt: snapshot.snapshotAt };
+  return { ownerId, hasEntitlement: true, snapshot: plus.snapshot };
 }
 
 export function createRevenueCatWebhookHandler(dependencies: WebhookDependencies) {
@@ -174,9 +217,25 @@ export async function fetchRevenueCatSubscriberSnapshot(
   if (!isUuid(ownerId) || !apiKey.trim()) throw new Error('RevenueCat snapshot configuration is unavailable.');
   const response = await fetcher(`https://api.revenuecat.com/v1/subscribers/${encodeURIComponent(ownerId)}`, {
     method: 'GET',
-    headers: { Authorization: `Bearer ${apiKey.trim()}`, Accept: 'application/json', 'X-Platform': 'ios' },
+    headers: { Authorization: `Bearer ${apiKey.trim()}`, Accept: 'application/json' },
     signal: AbortSignal.timeout(8000),
   });
   if (!response.ok) throw new Error('RevenueCat subscriber lookup failed.');
   return parseRevenueCatSubscriberSnapshot(ownerId, await response.json(), now);
+}
+
+export async function fetchRevenueCatSubscriberEntitlements(
+  ownerId: string,
+  apiKey: string,
+  fetcher: typeof fetch = fetch,
+  now = new Date(),
+): Promise<RevenueCatEntitlementsSnapshot> {
+  if (!isUuid(ownerId) || !apiKey.trim()) throw new Error('RevenueCat snapshot configuration is unavailable.');
+  const response = await fetcher(`https://api.revenuecat.com/v1/subscribers/${encodeURIComponent(ownerId)}`, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${apiKey.trim()}`, Accept: 'application/json' },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!response.ok) throw new Error('RevenueCat subscriber lookup failed.');
+  return parseRevenueCatSubscriberEntitlements(ownerId, await response.json(), now);
 }

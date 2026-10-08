@@ -3,6 +3,7 @@ import { describe, expect, it, jest } from '@jest/globals';
 import {
   createRevenueCatWebhookHandler,
   fetchRevenueCatSubscriberSnapshot,
+  parseRevenueCatSubscriberEntitlements,
   parseRevenueCatSubscriberSnapshot,
 } from '../../../supabase/functions/_shared/revenuecat-webhook';
 
@@ -27,6 +28,7 @@ function webhook(type = 'RENEWAL', extra: Record<string, unknown> = {}) {
 }
 
 function subscriber(overrides: Record<string, unknown> = {}) {
+  const { entitlements: extraEntitlements, ...plusOverrides } = overrides;
   return {
     request_date: '2026-10-08T12:00:00Z',
     subscriber: {
@@ -36,8 +38,9 @@ function subscriber(overrides: Record<string, unknown> = {}) {
           purchase_date: '2026-09-08T12:00:00Z',
           expires_date: '2026-11-08T12:00:00Z',
           grace_period_expires_date: null,
-          ...overrides,
+          ...plusOverrides,
         },
+        ...(extraEntitlements && typeof extraEntitlements === 'object' ? extraEntitlements as Record<string, unknown> : {}),
       },
     },
   };
@@ -56,8 +59,17 @@ describe('RevenueCat webhook sync', () => {
     expect(getSnapshot).not.toHaveBeenCalled();
   });
 
-  it('synchronizes the current verified Plus snapshot instead of trusting event purchase fields', async () => {
-    const snapshot = parseRevenueCatSubscriberSnapshot(ownerA, subscriber(), now);
+  it('synchronizes all current entitlement snapshots instead of trusting event purchase fields', async () => {
+    const snapshot = parseRevenueCatSubscriberEntitlements(ownerA, subscriber({
+      entitlements: {
+        'pack.interview_pro': {
+          product_identifier: 'dropmic_pack_interview_pro',
+          purchase_date: '2026-10-01T12:00:00Z',
+          expires_date: null,
+          grace_period_expires_date: null,
+        },
+      },
+    }), now);
     const getSnapshot = jest.fn(async () => snapshot);
     const applySnapshot = jest.fn(async () => undefined);
     const handler = createRevenueCatWebhookHandler({ authorization: 'Bearer webhook-secret', appId, getSnapshot, applySnapshot, now: () => now });
@@ -83,7 +95,7 @@ describe('RevenueCat webhook sync', () => {
   });
 
   it('reconciles every UUID involved in a transfer and ignores non-UUID aliases', async () => {
-    const getSnapshot = jest.fn(async (ownerId: string) => parseRevenueCatSubscriberSnapshot(ownerId, subscriber(), now));
+    const getSnapshot = jest.fn(async (ownerId: string) => parseRevenueCatSubscriberEntitlements(ownerId, subscriber(), now));
     const applySnapshot = jest.fn(async () => undefined);
     const handler = createRevenueCatWebhookHandler({ authorization: 'Bearer webhook-secret', appId, getSnapshot, applySnapshot });
     const result = await handler(webhook('TRANSFER', {
@@ -125,6 +137,27 @@ describe('RevenueCat webhook sync', () => {
     expect(expired.hasEntitlement && expired.snapshot.status).toBe('expired');
   });
 
+  it('keeps permanent Pack ownership separate from Plus and maps refunds through an absent entitlement', () => {
+    const owned = parseRevenueCatSubscriberEntitlements(ownerA, subscriber({
+      entitlements: {
+        'pack.founder_pitch': {
+          product_identifier: 'dropmic_pack_founder_pitch',
+          purchase_date: '2026-10-01T12:00:00Z',
+          expires_date: null,
+          grace_period_expires_date: null,
+        },
+      },
+    }), now);
+    expect(owned.entitlements.find((entry) => entry.entitlementKey === 'plus')?.hasEntitlement).toBe(true);
+    const pack = owned.entitlements.find((entry) => entry.entitlementKey === 'pack.founder_pitch');
+    expect(pack?.hasEntitlement).toBe(true);
+    expect(pack?.snapshot?.expiresAt).toBe('9999-12-31T23:59:59.999Z');
+    expect(owned.entitlements.find((entry) => entry.entitlementKey === 'pack.interview_pro')?.hasEntitlement).toBe(false);
+
+    const refunded = parseRevenueCatSubscriberEntitlements(ownerA, subscriber(), now);
+    expect(refunded.entitlements.find((entry) => entry.entitlementKey === 'pack.founder_pitch')?.hasEntitlement).toBe(false);
+  });
+
   it('represents a provider snapshot with no Plus entitlement as a revocation check', () => {
     const result = parseRevenueCatSubscriberSnapshot(ownerA, {
       request_date: '2026-10-08T12:00:00Z', subscriber: { entitlements: {} },
@@ -137,7 +170,7 @@ describe('RevenueCat webhook sync', () => {
     await fetchRevenueCatSubscriberSnapshot(ownerA, 'public-key', fetcher as unknown as typeof fetch, now);
     expect(fetcher).toHaveBeenCalledWith(`https://api.revenuecat.com/v1/subscribers/${ownerA}`, expect.objectContaining({
       method: 'GET',
-      headers: expect.objectContaining({ Authorization: 'Bearer public-key', 'X-Platform': 'ios' }),
+      headers: expect.objectContaining({ Authorization: 'Bearer public-key' }),
     }));
   });
 });

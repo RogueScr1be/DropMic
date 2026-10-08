@@ -210,6 +210,21 @@ describe('RevenueCat identity adapter', () => {
     await expect(pending).resolves.toEqual({ current: { identifier: 'default' } });
   });
 
+  it('selects the requested custom offering without changing the default offering', async () => {
+    const purchases = client();
+    const plusOffering = { identifier: 'default', availablePackages: [{ identifier: '$rc_monthly' }] };
+    const packOffering = { identifier: 'skill_packs', availablePackages: [{ identifier: 'pack_interview_pro' }] };
+    purchases.getOfferings.mockResolvedValue({ current: plusOffering, all: { default: plusOffering, skill_packs: packOffering } });
+    purchases.purchasePackage = jest.fn(async () => ({ customerInfo: {} }));
+    const adapter = createRevenueCatAdapter({ client: purchases, platform: 'ios', apiKey: 'test_key' });
+    await adapter.reconcileIdentity(session(userA));
+
+    await expect(adapter.getOfferings(session(userA))).resolves.toEqual({ current: plusOffering, all: { default: plusOffering, skill_packs: packOffering } });
+    await expect(adapter.getOfferings(session(userA), 'skill_packs')).resolves.toEqual({ current: packOffering });
+    await expect(adapter.purchasePackage?.(session(userA), 'pack_interview_pro', 'skill_packs')).resolves.toEqual({ ok: true });
+    expect(purchases.purchasePackage).toHaveBeenCalledWith({ identifier: 'pack_interview_pro' });
+  });
+
   it('fails closed for missing keys, unsupported platforms, and invalid users', async () => {
     const noKey = client();
     const noKeyAdapter = createRevenueCatAdapter({ client: noKey, platform: 'ios', apiKey: '' });

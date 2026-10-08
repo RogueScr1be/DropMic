@@ -1,4 +1,5 @@
 import React from 'react';
+import { Text } from 'react-native';
 import { act, create } from 'react-test-renderer';
 import { describe, expect, it, jest, beforeEach } from '@jest/globals';
 
@@ -45,7 +46,7 @@ describe('Plus paywall purchase verification', () => {
     jest.clearAllMocks();
     mockGetSession.mockResolvedValue(session);
     mockOfferings.mockResolvedValue({ current: { availablePackages: [{
-      identifier: 'monthly', product: { title: 'Monthly', priceString: '$2.99', description: 'Monthly Plus' },
+      identifier: 'monthly', product: { identifier: 'dropmic_plus_monthly', title: 'Monthly', priceString: '$4.99', description: 'Monthly Plus' },
     }] } });
     mockPurchase.mockResolvedValue({ ok: true });
     mockRestore.mockResolvedValue({ ok: true });
@@ -88,5 +89,18 @@ describe('Plus paywall purchase verification', () => {
     expect(mockSync).not.toHaveBeenCalled();
     expect(onAccessUpdated).not.toHaveBeenCalled();
     expect(tree.root.findByProps({ children: 'Restore is unavailable right now.' })).toBeTruthy();
+  });
+
+  it('does not surface the retired lifetime product or unrelated offerings', async () => {
+    mockOfferings.mockResolvedValue({ current: { availablePackages: [
+      { identifier: 'lifetime', product: { identifier: 'dropmic_plus_lifetime', title: 'Lifetime', priceString: '$19.99' } },
+      { identifier: 'pack', product: { identifier: 'dropmic_pack_interview_pro', title: 'Interview Pro', priceString: '$4.99' } },
+      { identifier: 'annual', product: { identifier: 'dropmic_plus_annual', title: 'Annual', priceString: '$29.99' } },
+    ] } });
+    const { tree } = await renderPaywall();
+    const labels = tree.root.findAll((node) => node.props.accessibilityRole === 'radio').map((node) => node.findAllByType(Text)[0].props.children);
+    expect(labels).toContain('Annual');
+    expect(labels).not.toContain('Lifetime');
+    expect(labels).not.toContain('Interview Pro');
   });
 });

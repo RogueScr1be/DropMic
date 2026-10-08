@@ -40,8 +40,8 @@ export type RevenueCatIdentityResult =
 export type RevenueCatAdapter = {
   reconcileIdentity: (session: Session | null | undefined) => Promise<RevenueCatIdentityResult>;
   clearAppOwnedBillingAvailability: () => void;
-  getOfferings: (session: Session | null | undefined) => Promise<unknown | null>;
-  purchasePackage?: (session: Session | null | undefined, packageIdentifier: string) => Promise<{ ok: true } | { ok: false; reason: string }>;
+  getOfferings: (session: Session | null | undefined, offeringIdentifier?: string) => Promise<unknown | null>;
+  purchasePackage?: (session: Session | null | undefined, packageIdentifier: string, offeringIdentifier?: string) => Promise<{ ok: true } | { ok: false; reason: string }>;
   restorePurchases?: (session: Session | null | undefined) => Promise<{ ok: true } | { ok: false; reason: string }>;
   presentCustomerCenter?: () => Promise<boolean>;
   isBillingAvailable: () => boolean;
@@ -181,7 +181,7 @@ export function createRevenueCatAdapter(options: AdapterOptions = {}): RevenueCa
     return operation;
   };
 
-  const getOfferings = async (session: Session | null | undefined) => {
+  const getOfferings = async (session: Session | null | undefined, offeringIdentifier?: string) => {
     const requestedUserId = permanentUserId(session);
     const generation = identityGeneration;
     if (
@@ -206,13 +206,15 @@ export function createRevenueCatAdapter(options: AdapterOptions = {}): RevenueCa
       ) {
         return null;
       }
-      return offerings;
+      if (!offeringIdentifier) return offerings;
+      const selectedOffering = (offerings as { all?: Record<string, unknown> } | null)?.all?.[offeringIdentifier];
+      return selectedOffering ? { current: selectedOffering } : null;
     } catch {
       return null;
     }
   };
 
-  const purchasePackage = async (session: Session | null | undefined, packageIdentifier: string) => {
+  const purchasePackage = async (session: Session | null | undefined, packageIdentifier: string, offeringIdentifier?: string) => {
     const requestedUserId = permanentUserId(session);
     const generation = identityGeneration;
     const operation = identityQueue.then(async () => {
@@ -221,7 +223,7 @@ export function createRevenueCatAdapter(options: AdapterOptions = {}): RevenueCa
         !billingAvailable || activeConfirmedUserId !== requestedUserId || sdkUserId !== requestedUserId
       ) return { ok: false as const, reason: 'billing_unavailable' };
 
-      const offerings = await getOfferings(session);
+      const offerings = await getOfferings(session, offeringIdentifier);
       if (!offerings) return { ok: false as const, reason: 'product_unavailable' };
       const packages = (offerings as { current?: { availablePackages?: { identifier?: string }[] } } | null)?.current?.availablePackages ?? [];
       const selected = packages.find((item) => item.identifier === packageIdentifier);

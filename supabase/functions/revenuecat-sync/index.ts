@@ -1,7 +1,7 @@
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.110.7';
 
-import { fetchRevenueCatSubscriberSnapshot } from '../_shared/revenuecat-webhook.ts';
+import { fetchRevenueCatSubscriberEntitlements } from '../_shared/revenuecat-webhook.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -38,20 +38,23 @@ Deno.serve(async (request: Request) => {
     if (data.user.is_anonymous === true) return json(403, { error: 'permanent_account_required' });
 
     const ownerId = data.user.id;
-    const snapshot = await fetchRevenueCatSubscriberSnapshot(ownerId, requiredEnv('REVENUECAT_IOS_PUBLIC_API_KEY'));
+    const snapshot = await fetchRevenueCatSubscriberEntitlements(ownerId, requiredEnv('REVENUECAT_IOS_PUBLIC_API_KEY'));
     const occurredAt = new Date().toISOString();
-    const resolved = await admin.rpc('apply_revenuecat_entitlement_snapshot', {
+    const resolved = await admin.rpc('apply_revenuecat_entitlements_snapshot', {
       p_event_id: `sync:${crypto.randomUUID()}`,
       p_event_type: 'USER_SYNC',
       p_event_at: occurredAt,
       p_owner_id: ownerId,
-      p_has_entitlement: snapshot.hasEntitlement,
-      p_product_id: snapshot.hasEntitlement ? snapshot.snapshot.productId : null,
-      p_started_at: snapshot.hasEntitlement ? snapshot.snapshot.startedAt : null,
-      p_expires_at: snapshot.hasEntitlement ? snapshot.snapshot.expiresAt : null,
-      p_grace_expires_at: snapshot.hasEntitlement ? snapshot.snapshot.graceExpiresAt : null,
-      p_status: snapshot.hasEntitlement ? snapshot.snapshot.status : null,
-      p_snapshot_at: snapshot.hasEntitlement ? snapshot.snapshot.snapshotAt : snapshot.snapshotAt,
+      p_entitlements: snapshot.entitlements.map((entitlement) => ({
+        entitlement_key: entitlement.entitlementKey,
+        has_entitlement: entitlement.hasEntitlement,
+        product_id: entitlement.snapshot?.productId ?? null,
+        started_at: entitlement.snapshot?.startedAt ?? null,
+        expires_at: entitlement.snapshot?.expiresAt ?? null,
+        grace_expires_at: entitlement.snapshot?.graceExpiresAt ?? null,
+        status: entitlement.snapshot?.status ?? null,
+      })),
+      p_snapshot_at: snapshot.snapshotAt,
     });
     if (resolved.error) return json(503, { error: 'billing_sync_unavailable' });
     return json(200, { synced: true });

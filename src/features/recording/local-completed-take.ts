@@ -15,6 +15,7 @@ export type LocalCompletedTake = {
   localUri: string;
   ownerId: string;
   prompt: string;
+  category?: string;
   quickReadIdempotencyKey: string;
   selectedDurationSeconds: RecordingDuration;
   topicId: string;
@@ -51,6 +52,7 @@ function parseLocalCompletedTake(raw: string | null): LocalCompletedTake | null 
       typeof parsed.localUri !== 'string' ||
       typeof parsed.topicId !== 'string' ||
       typeof parsed.prompt !== 'string' ||
+      (parsed.category !== undefined && typeof parsed.category !== 'string') ||
       !isRecordingDuration(parsed.selectedDurationSeconds) ||
       typeof parsed.completedDurationSeconds !== 'number' ||
       typeof parsed.completedAt !== 'string' ||
@@ -77,6 +79,7 @@ function completedTakeMatches(left: LocalCompletedTake, right: LocalCompletedTak
     left.localUri === right.localUri &&
     left.ownerId === right.ownerId &&
     left.prompt === right.prompt &&
+    left.category === right.category &&
     left.quickReadIdempotencyKey === right.quickReadIdempotencyKey &&
     left.selectedDurationSeconds === right.selectedDurationSeconds &&
     left.topicId === right.topicId

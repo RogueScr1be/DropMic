@@ -1,7 +1,12 @@
+import type { SkillPackPracticeContent, SkillPackId } from './skill-packs';
+
 export type SpeakingTopic = {
   id: string;
   prompt: string;
   category: string;
+  packId?: SkillPackId;
+  difficulty?: 1 | 2 | 3 | 4 | 5;
+  challengeReady?: boolean;
 };
 
 export const TOPIC_CATALOG: readonly SpeakingTopic[] = [
@@ -109,6 +114,22 @@ export const TOPIC_CATALOG: readonly SpeakingTopic[] = [
 
 export function getTopicById(topicId: string) {
   return TOPIC_CATALOG.find((topic) => topic.id === topicId) ?? null;
+}
+
+/** Selects Pack prompts in a repeatable difficulty progression. */
+export function selectNextPackTopic(pack: SkillPackPracticeContent, previousTopicId: string | null, seed = Date.now()): SpeakingTopic {
+  if (pack.prompts.length === 0) {
+    throw new Error('Skill Pack prompt catalog cannot be empty.');
+  }
+  const previousIndex = pack.prompts.findIndex((topic) => topic.id === previousTopicId);
+  if (previousIndex >= 0) {
+    const next = pack.prompts[(previousIndex + 1) % pack.prompts.length];
+    return { ...next, packId: pack.id };
+  }
+  const introductoryPrompts = pack.prompts.filter((topic) => topic.difficulty === 1);
+  const startingPrompts = introductoryPrompts.length > 0 ? introductoryPrompts : pack.prompts;
+  const index = Math.abs(Math.trunc(seed)) % startingPrompts.length;
+  return { ...startingPrompts[index], packId: pack.id };
 }
 
 function normalizeSeed(seed: number) {

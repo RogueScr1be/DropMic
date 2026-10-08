@@ -7,21 +7,22 @@ import { getPlusDisplayEligibility, syncRevenueCatEntitlement } from './plus-dis
 
 import { revenueCatAdapter } from './revenuecat-adapter';
 
-type PackageOption = { identifier: string | null; title: string; price: string; description: string };
+type PackageOption = { identifier: string | null; productId: string | null; title: string; price: string; description: string };
 
 const FALLBACK_PRODUCTS: PackageOption[] = [
-  { identifier: null, title: 'Monthly', price: 'Unavailable', description: 'Configure the RevenueCat monthly package.' },
-  { identifier: null, title: 'Annual', price: 'Unavailable', description: 'Configure the RevenueCat annual package.' },
-  { identifier: null, title: 'Lifetime', price: 'Unavailable', description: 'Configure the RevenueCat lifetime package.' },
+  { identifier: null, productId: null, title: 'Monthly', price: 'Unavailable', description: 'Configure the RevenueCat monthly subscription.' },
+  { identifier: null, productId: null, title: 'Annual', price: 'Unavailable', description: 'Configure the RevenueCat annual subscription.' },
 ];
 
 function readPackages(value: unknown): PackageOption[] {
-  const packages = (value as { current?: { availablePackages?: { identifier?: unknown; product?: { title?: unknown; priceString?: unknown; description?: unknown } }[] } } | null)?.current?.availablePackages;
+  const packages = (value as { current?: { availablePackages?: { identifier?: unknown; product?: { identifier?: unknown; title?: unknown; priceString?: unknown; description?: unknown } }[] } } | null)?.current?.availablePackages;
   if (!Array.isArray(packages)) return [];
   return packages.flatMap((item) => {
     const identifier = typeof item.identifier === 'string' ? item.identifier : '';
-    if (!identifier) return [];
-    return [{ identifier, title: typeof item.product?.title === 'string' ? item.product.title : identifier, price: typeof item.product?.priceString === 'string' ? item.product.priceString : 'See App Store', description: typeof item.product?.description === 'string' ? item.product.description : 'Plus access' }];
+    const productId = typeof item.product?.identifier === 'string' ? item.product.identifier : '';
+    if (!identifier || !['dropmic_plus_monthly', 'dropmic_plus_annual'].includes(productId)) return [];
+    const title = productId.endsWith('_monthly') ? 'Monthly' : 'Annual';
+    return [{ identifier, productId, title, price: typeof item.product?.priceString === 'string' ? item.product.priceString : 'See App Store', description: typeof item.product?.description === 'string' ? item.product.description : 'DropMic Plus subscription' }];
   });
 }
 
@@ -102,7 +103,7 @@ export function PlusPaywall({ onAccessUpdated, onClose, visible }: { onAccessUpd
     <View style={styles.backdrop}><ScrollView contentContainerStyle={styles.content} style={styles.sheet}>
       <View style={styles.header}><Text style={styles.kicker}>DROPMIC PLUS</Text><Pressable accessibilityLabel="Close Plus" onPress={onClose}><Text style={styles.close}>Close</Text></Pressable></View>
       <Text accessibilityRole="header" style={styles.title}>More room to find your voice.</Text>
-      <Text style={styles.body}>Unlock 60- and 90-second Drops, unlimited Saved Drops, and the full Quick Read. Quick Reads remain capped at three per day.</Text>
+      <Text style={styles.body}>Unlock 60- and 90-second Drops, unlimited Saved Drops, and the full Quick Read. Choose monthly or annual billing. An introductory offer may be available to eligible subscribers; Apple confirms eligibility at checkout.</Text>
       {products.map((product) => <Pressable key={product.identifier ?? product.title} accessibilityRole="radio" accessibilityState={{ selected: selected === product.identifier && product.identifier !== null }} onPress={() => product.identifier && setSelected(product.identifier)} style={[styles.product, selected === product.identifier && product.identifier !== null && styles.selected]}>
         <View><Text style={styles.productTitle}>{product.title}</Text><Text style={styles.productDescription}>{product.description}</Text></View><Text style={styles.price}>{product.price}</Text>
       </Pressable>)}

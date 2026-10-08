@@ -157,6 +157,9 @@ verify_jwt = false
 [functions.revenuecat-webhook]
 verify_jwt = false
 
+[functions.skill-pack-content]
+verify_jwt = true
+
 # Vector Buckets is available to Supabase Pro plan.
 # [storage.vector.buckets.documents-openai]
 

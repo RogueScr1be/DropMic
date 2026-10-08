@@ -115,6 +115,7 @@ function isSavedDrop(value: unknown): value is SavedDrop {
     typeof drop.localUri === 'string' &&
     typeof drop.topicId === 'string' &&
     typeof drop.prompt === 'string' &&
+    (drop.category === undefined || typeof drop.category === 'string') &&
     (drop.selectedDurationSeconds === 30 || drop.selectedDurationSeconds === 60 || drop.selectedDurationSeconds === 90) &&
     typeof drop.completedDurationSeconds === 'number' &&
     Number.isFinite(drop.completedDurationSeconds) &&
@@ -135,6 +136,7 @@ function sameDrop(left: SavedDrop, right: SavedDrop) {
     persistedRecordingUri(left.localUri) === persistedRecordingUri(right.localUri) &&
     left.ownerId === right.ownerId &&
     left.prompt === right.prompt &&
+    left.category === right.category &&
     left.quickReadIdempotencyKey === right.quickReadIdempotencyKey &&
     left.selectedDurationSeconds === right.selectedDurationSeconds &&
     left.completedDurationSeconds === right.completedDurationSeconds &&

@@ -42,7 +42,7 @@ function isStatus(value: unknown): value is EntitlementStatus {
  * This helper intentionally accepts no client-supplied owner id and performs
  * no provider or purchase-SDK calls.
  */
-export function resolvePlusAccess(row: unknown, now: Date = new Date()): PlusAccessDecision {
+export function resolveEntitlementAccess(row: unknown, expectedKey: string, now: Date = new Date()): PlusAccessDecision {
   if (row === null || typeof row !== 'object' || Array.isArray(row)) {
     return denied('missing');
   }
@@ -53,7 +53,7 @@ export function resolvePlusAccess(row: unknown, now: Date = new Date()): PlusAcc
 
   const state = row as Record<string, unknown>;
   if (
-    state.entitlement_key !== PLUS_ENTITLEMENT_KEY ||
+    state.entitlement_key !== expectedKey ||
     state.provider !== REVENUECAT_PROVIDER ||
     typeof state.product_id !== 'string' ||
     state.product_id.trim() === '' ||
@@ -102,4 +102,8 @@ export function resolvePlusAccess(row: unknown, now: Date = new Date()): PlusAcc
     case 'revoked':
       return denied('revoked');
   }
+}
+
+export function resolvePlusAccess(row: unknown, now: Date = new Date()): PlusAccessDecision {
+  return resolveEntitlementAccess(row, PLUS_ENTITLEMENT_KEY, now);
 }
