@@ -64,9 +64,12 @@ transaction has been performed.
    entitlements and Pack-versus-Plus isolation. Do not use a live purchase.
 4. Build the physical iOS release with
    `eas build --platform ios --profile production` after the latest source is
-   committed and pushed. The connected EAS dashboard could not be opened from
-   this environment, and no local EAS CLI is installed, so no build was
-   started here.
+   committed and pushed. The latest source is pushed, and the production
+   RevenueCat and Supabase variables are present in Expo. The project has no
+   GitHub repository connection, so its Build from GitHub control is disabled;
+   this environment also has no Expo CLI token or local EAS CLI. Connect
+   `RogueScr1be/DropMic` to the Expo project, or make Expo CLI access available
+   through the secure environment, before triggering the production build.
 5. Verify the paid-app agreement status in App Store Connect. The account
    holder must accept any legal or financial agreement Apple presents. Submit
    to TestFlight/App Review only after the owner completes the preceding
