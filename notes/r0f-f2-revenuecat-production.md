@@ -1,10 +1,11 @@
 # RevenueCat production billing path
 
-Status (2026-10-08): client/source implementation is in this checkout and
-validated locally. The additive Supabase migration is deployed as
-`20261008173934`; `revenuecat-sync` and `revenuecat-webhook` are active at
-version 7, and `skill-pack-content` is active at version 1. No purchase or
-production billing transaction has been performed.
+Status (2026-10-08): the client/source implementation is validated locally.
+The additive Supabase migrations `20261008151740` and `20261008173934` are
+deployed; `revenuecat-sync` and `revenuecat-webhook` are active at version 8,
+and `skill-pack-content` is active at version 1. The `skill_packs` RevenueCat
+offering contains both permanent products. No purchase or production billing
+transaction has been performed.
 
 ## Client configuration
 
@@ -44,29 +45,32 @@ production billing transaction has been performed.
   after verifying both the signed-in owner and the matching permanent Pack
   entitlement.
 
-## Remaining production setup before accepting purchases
+## Remaining release gates
 
-1. In App Store Connect, create/complete the subscription products:
-   `dropmic_plus_monthly` at $4.99/month, and `dropmic_plus_annual` at
-   $29.99/year with the approved $19.99 first-year introductory offer for
-   eligible subscribers. Add localized names/descriptions and review metadata.
-2. Create `dropmic_pack_interview_pro` and `dropmic_pack_founder_pitch` as
-   $4.99 non-consumable products. Use the two matching permanent entitlements.
-3. In RevenueCat, attach the two Pack products to their separate entitlements
-   and add custom offering packages `pack_interview_pro` and
-   `pack_founder_pitch` to the `skill_packs` offering. The RevenueCat product
-   records, entitlement links, and custom package mappings already exist; the
-   Apple products are not yet found in App Store Connect.
-4. Verify the RevenueCat app-scoped webhook for TheDropMic points to
-   `https://bxoqbbzabubvdbxqquyt.supabase.co/functions/v1/revenuecat-webhook`
-   and has the Supabase-matched Authorization header. A dashboard TEST request
-   previously returned HTTP 200; a sandbox purchase and restore test remain.
-5. Run sandbox monthly, annual, and non-consumable purchase/restore checks;
-   verify each RLS-scoped entitlement and that Pack ownership does not grant
-   Plus. Do not use a live purchase for this test.
-6. Build with `eas build --platform ios --profile production` and submit only
-   after App Store listing, privacy, screenshots, review metadata, and test
-   account gates are complete.
+1. Apple records now exist for `dropmic_plus_monthly` ($4.99/month),
+   `dropmic_plus_annual` ($29.99/year with the approved $19.99 first-year
+   introductory offer), and both $4.99 non-consumable Packs. RevenueCat has the
+   correct product-to-entitlement links and both custom packages in
+   `skill_packs`; its App Store status for both Packs is still `Missing
+   Metadata`.
+2. The owner must provide genuine App Review purchase-flow screenshots for
+   both non-consumable products. Apple says the first non-consumable must be
+   submitted with a new app version. Complete the app listing screenshots,
+   privacy answers, reviewer contact/sign-in details, and review notes as well.
+3. The configured RevenueCat app webhook previously returned HTTP 200 for a
+   TEST event. Recheck its endpoint and authorization configuration before
+   release; do not expose the secret. Then run sandbox monthly, annual,
+   non-consumable purchase and restore checks, verifying RLS-scoped
+   entitlements and Pack-versus-Plus isolation. Do not use a live purchase.
+4. Build the physical iOS release with
+   `eas build --platform ios --profile production` after the latest source is
+   committed and pushed. The connected EAS dashboard could not be opened from
+   this environment, and no local EAS CLI is installed, so no build was
+   started here.
+5. Verify the paid-app agreement status in App Store Connect. The account
+   holder must accept any legal or financial agreement Apple presents. Submit
+   to TestFlight/App Review only after the owner completes the preceding
+   metadata and privacy gates.
 
 The webhook secret is a credential; do not commit or paste it into chat. The
 RevenueCat iOS public SDK key is safe to embed in the application, but should
