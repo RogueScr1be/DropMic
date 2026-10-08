@@ -35,6 +35,7 @@ This document is source-controlled and contains names, boundaries, and verificat
 - Existing product names/descriptions and U.S. prices are set. No purchase or restore transaction has been run.
 - Review requirements: upload genuine purchase-flow screenshots for both Packs; complete the app listing screenshots, privacy answers, reviewer contact/sign-in information, and review notes describing microphone permission, the free 30-second challenge, Restore Purchases, and Plus-gated 60/90-second access.
 - The first non-consumable IAP must be submitted with a new app version. Do not submit until the owner completes the App Store metadata and review gates.
+- Expo production variables are configured, including the RevenueCat iOS public SDK key and Supabase public client settings. The EAS project currently has internal builds only; no production build exists, and its GitHub build connection is not configured.
 - Terms URL: EXPO_PUBLIC_DROPMIC_TERMS_URL.
 - Privacy URL: EXPO_PUBLIC_DROPMIC_PRIVACY_URL.
 - App Store URL: leave unset until App Store Connect assigns it.
@@ -58,4 +59,4 @@ This document is source-controlled and contains names, boundaries, and verificat
 
 ## Release verification boundary
 
-Remaining release gates are App Review screenshots and listing assets, owner-provided privacy answers and reviewer access details, sandbox purchase/restore verification, an iOS EAS build, and TestFlight/App Store submission. The paid-app agreement must be checked and accepted by the account holder if Apple requires it. No live purchase or App Store submission has been performed.
+Remaining release gates are App Review screenshots and listing assets, owner-provided privacy answers and reviewer access details, sandbox purchase/restore verification, an iOS EAS production build, and TestFlight/App Store submission. To trigger an EAS build, either connect `RogueScr1be/DropMic` to the Expo project or provide Expo CLI access through the secure environment. The paid-app agreement must be checked and accepted by the account holder if Apple requires it. No live purchase or App Store submission has been performed.
