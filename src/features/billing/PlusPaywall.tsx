@@ -3,6 +3,7 @@ import { Linking, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'r
 
 import { getSession } from '@/features/auth/auth-service';
 import { trackEvent } from '@/features/analytics/analytics';
+import { getPlusDisplayEligibility, syncRevenueCatEntitlement } from './plus-display';
 
 import { revenueCatAdapter } from './revenuecat-adapter';
 
@@ -24,7 +25,7 @@ function readPackages(value: unknown): PackageOption[] {
   });
 }
 
-export function PlusPaywall({ onClose, visible }: { onClose: () => void; visible: boolean }) {
+export function PlusPaywall({ onAccessUpdated, onClose, visible }: { onAccessUpdated?: (enabled: boolean) => void; onClose: () => void; visible: boolean }) {
   const [products, setProducts] = useState<PackageOption[]>(FALLBACK_PRODUCTS);
   const [selected, setSelected] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -33,7 +34,7 @@ export function PlusPaywall({ onClose, visible }: { onClose: () => void; visible
   useEffect(() => {
     if (!visible) return;
     void trackEvent('paywall_viewed');
-    void getSession().then((session) => revenueCatAdapter.getTestStoreOfferings(session)).then((offerings) => {
+    void getSession().then((session) => revenueCatAdapter.getOfferings(session)).then((offerings) => {
       const configured = readPackages(offerings);
       if (configured.length > 0) {
         setProducts(configured);
@@ -57,7 +58,12 @@ export function PlusPaywall({ onClose, visible }: { onClose: () => void; visible
       }
       const result = await revenueCatAdapter.purchasePackage?.(session, selected) ?? { ok: false as const, reason: 'billing_unavailable' };
       if (result.ok) {
-        setMessage('Purchase complete. Plus access will appear after the verified entitlement sync.');
+        const syncAccepted = await syncRevenueCatEntitlement();
+        const verified = syncAccepted ? await getPlusDisplayEligibility() : false;
+        onAccessUpdated?.(verified);
+        setMessage(verified
+          ? 'Purchase complete. Plus is active on your account.'
+          : 'Purchase complete. Store verification is still processing; Plus will appear after confirmation.');
         void trackEvent('purchase_completed');
       } else if (result.reason === 'purchase_cancelled') {
         setMessage('Purchase cancelled. Your account was not changed.');
@@ -76,8 +82,19 @@ export function PlusPaywall({ onClose, visible }: { onClose: () => void; visible
     setBusy(true); setMessage(null);
     try {
       const result = await revenueCatAdapter.restorePurchases?.(await getSession()) ?? { ok: false as const, reason: 'billing_unavailable' };
-      setMessage(result.ok ? 'Restore requested. Verified access will refresh shortly.' : 'Restore is unavailable right now.');
-      if (result.ok) void trackEvent('restore_completed');
+      if (result.ok) {
+        const syncAccepted = await syncRevenueCatEntitlement();
+        const verified = syncAccepted ? await getPlusDisplayEligibility() : false;
+        onAccessUpdated?.(verified);
+        setMessage(verified
+          ? 'Purchases restored. Plus is active on your account.'
+          : 'Restore complete. Store verification is still processing; Plus will appear after confirmation.');
+        void trackEvent('restore_completed');
+      } else {
+        setMessage('Restore is unavailable right now.');
+      }
+    } catch {
+      setMessage('Restore is unavailable right now.');
     } finally { setBusy(false); }
   };
 

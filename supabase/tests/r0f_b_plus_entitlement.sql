@@ -1,6 +1,6 @@
 begin;
 
-select plan(20);
+select plan(21);
 
 select has_table('public', 'billing_entitlements', 'billing_entitlements exists');
 select has_pk('public', 'billing_entitlements', 'owner and entitlement key form the primary key');
@@ -21,7 +21,8 @@ select col_not_null('public', 'billing_entitlements', 'owner_id', 'owner is requ
 select col_not_null('public', 'billing_entitlements', 'entitlement_key', 'entitlement key is required');
 select col_not_null('public', 'billing_entitlements', 'provider', 'provider is required');
 select col_not_null('public', 'billing_entitlements', 'status', 'status is required');
-select col_not_null('public', 'billing_entitlements', 'expires_at', 'expiration is required');
+select col_not_null('public', 'billing_entitlements', 'expires_at', 'an expiration or lifetime sentinel is required');
+select col_not_null('public', 'billing_entitlements', 'provider_snapshot_at', 'snapshot ordering timestamp is required');
 select ok(
   (select relrowsecurity from pg_class where oid = 'public.billing_entitlements'::regclass),
   'RLS is enabled'

@@ -7,15 +7,17 @@ jest.mock('@/features/auth/auth-client', () => ({
   supabase: {
     auth: { getSession: jest.fn() },
     from: jest.fn(),
+    functions: { invoke: jest.fn() },
   },
 }));
 
 import { supabase } from '@/features/auth/auth-client';
-import { getPlusDisplayEligibility } from './plus-display';
+import { getPlusDisplayEligibility, syncRevenueCatEntitlement } from './plus-display';
 
 const mockSupabase = supabase as any;
 const mockGetSession: any = mockSupabase.auth.getSession;
 const mockFrom: any = mockSupabase.from;
+const mockInvoke: any = mockSupabase.functions.invoke;
 
 const now = new Date('2026-09-01T12:00:00.000Z');
 
@@ -94,5 +96,16 @@ describe('Plus display eligibility', () => {
     expect(mockFrom).toHaveBeenCalledWith('billing_entitlements');
     expect(query.eq).toHaveBeenCalledWith('entitlement_key', 'plus');
     expect(query.eq).not.toHaveBeenCalledWith('owner_id', expect.anything());
+  });
+
+  it('requests server-verified RevenueCat synchronization without sending an owner ID', async () => {
+    mockInvoke.mockResolvedValueOnce({ data: { synced: true }, error: null });
+    await expect(syncRevenueCatEntitlement()).resolves.toBe(true);
+    expect(mockInvoke).toHaveBeenCalledWith('revenuecat-sync', { method: 'POST', body: {} });
+  });
+
+  it('fails closed when the server-side RevenueCat sync is unavailable', async () => {
+    mockInvoke.mockResolvedValueOnce({ data: null, error: { message: 'unavailable' } });
+    await expect(syncRevenueCatEntitlement()).resolves.toBe(false);
   });
 });

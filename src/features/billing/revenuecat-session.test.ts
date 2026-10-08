@@ -6,7 +6,7 @@ jest.mock('./revenuecat-adapter', () => ({
   revenueCatAdapter: {
     reconcileIdentity: jest.fn(async () => ({ available: true })),
     clearAppOwnedBillingAvailability: jest.fn(),
-    getTestStoreOfferings: jest.fn(async () => null),
+    getOfferings: jest.fn(async () => null),
     isBillingAvailable: jest.fn(() => false),
   },
 }));
@@ -27,7 +27,7 @@ describe('RevenueCat session wiring', () => {
     const adapter = {
       reconcileIdentity,
       clearAppOwnedBillingAvailability,
-      getTestStoreOfferings: jest.fn(async () => null),
+      getOfferings: jest.fn(async () => null),
       isBillingAvailable: jest.fn(() => false),
     };
     let authCallback: ((event: string, currentSession: any) => void) | undefined;
@@ -64,7 +64,7 @@ describe('RevenueCat session wiring', () => {
     const adapter = {
       reconcileIdentity: jest.fn(async () => ({ available: true as const })),
       clearAppOwnedBillingAvailability: jest.fn(),
-      getTestStoreOfferings: jest.fn(async () => null),
+      getOfferings: jest.fn(async () => null),
       isBillingAvailable: jest.fn(() => false),
     };
 

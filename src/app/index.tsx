@@ -1797,7 +1797,7 @@ export default function AudioProofScreen() {
         takeId={takeIdentity.clientAttemptId}
         visible={isQuickReadVisible}
       />
-      <PlusPaywall onClose={() => setIsPlusPaywallVisible(false)} visible={isPlusPaywallVisible} />
+      <PlusPaywall onAccessUpdated={setPlusEnabled} onClose={() => setIsPlusPaywallVisible(false)} visible={isPlusPaywallVisible} />
     </>
   );
 }

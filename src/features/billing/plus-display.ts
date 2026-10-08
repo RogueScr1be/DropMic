@@ -33,6 +33,17 @@ export async function getPlusDisplayEligibility(now = new Date()): Promise<boole
   }
 }
 
+/** Ask the authenticated Edge Function to re-read current state from RevenueCat. */
+export async function syncRevenueCatEntitlement(): Promise<boolean> {
+  if (!isSupabaseConfigured || !supabase) return false;
+  try {
+    const result = await supabase.functions.invoke('revenuecat-sync', { method: 'POST', body: {} });
+    return !result.error;
+  } catch {
+    return false;
+  }
+}
+
 export function subscribeToPlusDisplaySession(onChange: (userId: string | null) => void) {
   if (!isSupabaseConfigured || !supabase) {
     return () => undefined;

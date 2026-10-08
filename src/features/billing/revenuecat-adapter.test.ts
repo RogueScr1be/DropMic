@@ -4,7 +4,7 @@ import { describe, expect, it, jest } from '@jest/globals';
 
 jest.mock('react-native-purchases', () => ({ __esModule: true, default: {} }));
 
-import { createRevenueCatAdapter } from './revenuecat-adapter';
+import { createRevenueCatAdapter, selectRevenueCatIosApiKey } from './revenuecat-adapter';
 
 const userA = '11111111-1111-4111-8111-111111111111';
 const userB = '22222222-2222-4222-8222-222222222222';
@@ -32,6 +32,12 @@ function client(): any {
 }
 
 describe('RevenueCat identity adapter', () => {
+  it('prefers the App Store public key and only allows Test Store keys in development', () => {
+    expect(selectRevenueCatIosApiKey({ productionKey: ' apple_public ', testStoreKey: 'test_store', isDevelopment: false })).toBe('apple_public');
+    expect(selectRevenueCatIosApiKey({ productionKey: '', testStoreKey: ' test_store ', isDevelopment: true })).toBe('test_store');
+    expect(selectRevenueCatIosApiKey({ productionKey: '', testStoreKey: 'test_store', isDevelopment: false })).toBe('');
+  });
+
   it('leaves the SDK unconfigured for missing and anonymous sessions', async () => {
     const purchases = client();
     const adapter = createRevenueCatAdapter({ client: purchases, platform: 'ios', apiKey: 'test_key' });
@@ -154,9 +160,9 @@ describe('RevenueCat identity adapter', () => {
     const adapter = createRevenueCatAdapter({ client: purchases, platform: 'ios', apiKey: 'test_key' });
 
     await adapter.reconcileIdentity(session(userA));
-    await expect(adapter.getTestStoreOfferings(session(userB))).resolves.toBeNull();
-    await expect(adapter.getTestStoreOfferings(null)).resolves.toBeNull();
-    await expect(adapter.getTestStoreOfferings(session(userA, true))).resolves.toBeNull();
+    await expect(adapter.getOfferings(session(userB))).resolves.toBeNull();
+    await expect(adapter.getOfferings(null)).resolves.toBeNull();
+    await expect(adapter.getOfferings(session(userA, true))).resolves.toBeNull();
     expect(purchases.getOfferings).not.toHaveBeenCalled();
   });
 
@@ -167,7 +173,7 @@ describe('RevenueCat identity adapter', () => {
     const adapter = createRevenueCatAdapter({ client: purchases, platform: 'ios', apiKey: 'test_key' });
 
     await adapter.reconcileIdentity(session(userA));
-    const pending = adapter.getTestStoreOfferings(session(userA));
+    const pending = adapter.getOfferings(session(userA));
     await Promise.resolve();
     adapter.clearAppOwnedBillingAvailability();
     offerings.resolve({ current: { identifier: 'default' } });
@@ -183,7 +189,7 @@ describe('RevenueCat identity adapter', () => {
     const adapter = createRevenueCatAdapter({ client: purchases, platform: 'ios', apiKey: 'test_key' });
 
     await adapter.reconcileIdentity(session(userA));
-    const pending = adapter.getTestStoreOfferings(session(userA));
+    const pending = adapter.getOfferings(session(userA));
     await Promise.resolve();
     await adapter.reconcileIdentity(session(userB));
     offerings.resolve({ current: { identifier: 'default' } });
@@ -198,7 +204,7 @@ describe('RevenueCat identity adapter', () => {
     const adapter = createRevenueCatAdapter({ client: purchases, platform: 'ios', apiKey: 'test_key' });
 
     await adapter.reconcileIdentity(session(userA));
-    const pending = adapter.getTestStoreOfferings(session(userA));
+    const pending = adapter.getOfferings(session(userA));
     offerings.resolve({ current: { identifier: 'default' } });
 
     await expect(pending).resolves.toEqual({ current: { identifier: 'default' } });
@@ -230,6 +236,33 @@ describe('RevenueCat identity adapter', () => {
 
     await expect(adapter.purchasePackage?.(session(userA), 'annual')).resolves.toEqual({ ok: true });
     expect(purchasePackage).toHaveBeenCalledWith({ identifier: 'annual' });
+  });
+
+  it('serializes account changes behind a purchase and never reports a stale purchase as the next user', async () => {
+    const purchases = client();
+    const transaction = deferred<unknown>();
+    const purchaseStarted = deferred<void>();
+    const purchasePackage = jest.fn(() => {
+      purchaseStarted.resolve();
+      return transaction.promise;
+    });
+    purchases.purchasePackage = purchasePackage;
+    purchases.getOfferings.mockResolvedValue({ current: { availablePackages: [{ identifier: 'annual' }] } });
+    purchases.getAppUserID.mockResolvedValueOnce(userA).mockResolvedValue(userB);
+    const adapter = createRevenueCatAdapter({ client: purchases, platform: 'ios', apiKey: 'test_key' });
+    await adapter.reconcileIdentity(session(userA));
+
+    const purchase = adapter.purchasePackage?.(session(userA), 'annual');
+    await purchaseStarted.promise;
+    const switchUser = adapter.reconcileIdentity(session(userB));
+    expect(purchasePackage).toHaveBeenCalledTimes(1);
+    expect(purchases.logIn).not.toHaveBeenCalled();
+
+    transaction.resolve({ customerInfo: {} });
+    await expect(purchase).resolves.toEqual({ ok: false, reason: 'billing_unavailable' });
+    await expect(switchUser).resolves.toEqual({ available: true });
+    expect(purchases.logIn).toHaveBeenCalledWith(userB);
+    expect(purchases.logOut).not.toHaveBeenCalled();
   });
 
   it('distinguishes a cancelled purchase from a failed purchase', async () => {
