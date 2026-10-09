@@ -5,7 +5,8 @@
       "autoIncrement": true,
       "environment": "production",
       "ios": {
-        "simulator": false
+        "simulator": false,
+        "image": "latest"
       }
     },
     "internal": {
