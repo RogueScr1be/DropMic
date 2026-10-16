@@ -620,7 +620,7 @@ export default function AudioProofScreen() {
     } catch (error) {
       if (error instanceof SavedDropLimitError) {
         await trackEvent('saved_drop_limit_reached', { dedupeKey: `saved-limit:${retainedTake.ownerId}:${new Date().toISOString().slice(0, 10)}` });
-        setActionError('You have three Saved Drops. Upgrade to Plus to keep this new Drop, or delete an older one.');
+        setActionError('You already have three Saved Drops, the Free plan limit. Upgrade to Plus to keep this one, or discard it and choose another prompt.');
       }
       throw error;
     }
@@ -1394,8 +1394,15 @@ export default function AudioProofScreen() {
     try {
       operationGeneration.current += 1;
       await deleteRetainedCompletedTake(recordingUri);
+      if (challengeAttempt) {
+        await clearPendingChallenge();
+        await clearChallengeAttemptSession();
+        setActiveChallengeToken(null);
+        setChallengeAttempt(false);
+      }
       beginNewTake(takeTwoBaselineRunId);
       dispatch({ type: 'RETRY' });
+      setActionError(null);
       if (takeTwoBaselineRunId) {
         setPhase('duration_selection');
       } else {
@@ -1403,12 +1410,14 @@ export default function AudioProofScreen() {
       }
     } catch (retryError) {
       setActionError(retryError instanceof Error ? retryError.message : 'Unable to retry recording.');
-      dispatch({
-        type: 'FAILURE',
-        message: retryError instanceof Error ? retryError.message : 'Unable to retry recording.',
-      });
+      if (useRecordingStore.getState().state !== 'error') {
+        dispatch({
+          type: 'FAILURE',
+          message: retryError instanceof Error ? retryError.message : 'Unable to retry recording.',
+        });
+      }
     }
-  }, [beginNewTake, chooseNewTopic, deleteRetainedCompletedTake, dispatch, recordingUri, takeTwoBaselineRunId]);
+  }, [beginNewTake, challengeAttempt, chooseNewTopic, deleteRetainedCompletedTake, dispatch, recordingUri, takeTwoBaselineRunId]);
 
   const deleteAttempt = useCallback(async () => {
     try {
@@ -1718,7 +1727,7 @@ export default function AudioProofScreen() {
 
                 {displayedPhase === 'interrupted' && (
           <StatusPanel
-            actionLabel="Try this prompt again"
+            actionLabel="Choose another prompt"
             body="The take stopped safely. Nothing left this device."
             onAction={() => void retryAttempt()}
             prompt={topic.prompt}
@@ -1733,7 +1742,7 @@ export default function AudioProofScreen() {
                 ? 'Retry Save'
                 : recordingFailureKind === 'cleanup'
                   ? 'Retry Cleanup'
-                  : 'Try again'
+                  : 'Choose a new prompt'
             }
             body={actionError ?? recordingError ?? 'The take failed safely. Your local state is still intact.'}
             onAction={() => {
@@ -1745,8 +1754,10 @@ export default function AudioProofScreen() {
                 void retryAttempt();
               }
             }}
+            secondaryActionLabel={recordingFailureKind === 'persistence' ? 'Discard this take & choose a new prompt' : undefined}
+            onSecondaryAction={recordingFailureKind === 'persistence' ? () => void retryAttempt() : undefined}
             prompt={topic.prompt}
-            title="Let’s reset the take."
+            title={recordingFailureKind === 'persistence' ? 'This Drop hasn’t been saved yet.' : 'Let’s try that again.'}
           />
                 )}
 
@@ -2303,22 +2314,26 @@ function StatusPanel({
   actionLabel,
   body,
   onAction,
+  onSecondaryAction,
   prompt,
+  secondaryActionLabel,
   title,
 }: {
   actionLabel: string;
   body: string;
   onAction: () => void;
+  onSecondaryAction?: () => void;
   prompt: string;
+  secondaryActionLabel?: string;
   title: string;
 }) {
   return (
     <View style={styles.centerSection}>
-      <Text style={styles.eyebrow}>LOCAL RECOVERY</Text>
       <Text accessibilityRole="header" style={styles.sectionTitle}>{title}</Text>
       <Text style={styles.centerPrompt}>{prompt}</Text>
       <Text style={styles.errorText}>{body}</Text>
       <ActionButton label={actionLabel} onPress={onAction} />
+      {secondaryActionLabel && onSecondaryAction && <ActionButton label={secondaryActionLabel} onPress={onSecondaryAction} secondary />}
     </View>
   );
 }

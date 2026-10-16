@@ -59,14 +59,14 @@ describe('Skill Packs one-time purchase flow', () => {
 
   it('buys the exact custom package, reconciles server ownership, and keeps Plus separate', async () => {
     const { tree, props } = await renderStore();
-    await act(async () => tree.root.findByProps({ accessibilityLabel: 'Buy Interview Pro' }).props.onPress());
+    await act(async () => tree.root.findByProps({ accessibilityLabel: 'Buy Interview Drip' }).props.onPress());
 
     expect(mockPurchase).toHaveBeenCalledWith(session, 'pack_interview_pro', 'skill_packs');
     expect(mockSync).toHaveBeenCalledTimes(1);
     expect(props.onOwnedPacksUpdated).toHaveBeenCalledWith(['interview_pro']);
     expect(props.onPlusAccessUpdated).toHaveBeenCalledWith(false);
-    expect(tree.root.findByProps({ children: 'Interview Pro is now yours permanently.' })).toBeTruthy();
-    expect(tree.root.findByProps({ children: 'Buy Founder Pitch · $4.99' })).toBeTruthy();
+    expect(tree.root.findByProps({ children: 'Interview Drip is now yours permanently.' })).toBeTruthy();
+    expect(tree.root.findByProps({ children: 'Buy Founder Drip · $4.99' })).toBeTruthy();
   });
 
   it('fails closed when the offering package is linked to a different store product', async () => {
@@ -74,7 +74,7 @@ describe('Skill Packs one-time purchase flow', () => {
       { identifier: 'pack_interview_pro', product: { identifier: 'dropmic_plus_monthly', priceString: '$4.99' } },
     ] } });
     const { tree } = await renderStore();
-    const button = tree.root.findByProps({ accessibilityLabel: 'Buy Interview Pro' });
+    const button = tree.root.findByProps({ accessibilityLabel: 'Buy Interview Drip' });
 
     expect(button.props.disabled).toBe(true);
     expect(mockPurchase).not.toHaveBeenCalled();

@@ -12,6 +12,7 @@ describe('share card privacy contract', () => {
     });
     expect(text).toContain('Speaker Vibe: Clear and warm');
     expect(text).toContain('Drop Score: 84%');
+    expect(text).toContain('I scored 84%. Can you beat that?');
     expect(shareCardIsPrivateSafe(text)).toBe(true);
     expect(shareCardIsPrivateSafe(`${text}\ntranscript: private`)).toBe(false);
   });
@@ -20,5 +21,6 @@ describe('share card privacy contract', () => {
     const text = buildShareCardText({ prompt: 'What changed your mind?', challengeUrl: 'micdrop://challenge/opaque-token' });
     expect(text).not.toContain('Score');
     expect(text).not.toContain('Vibe');
+    expect(text).toContain('Can you take this prompt?');
   });
 });

@@ -32,6 +32,8 @@ describe('challenge public contract', () => {
   it('keeps share text free of private backend data', () => {
     const text = challengeShareText({ durationSeconds: 30, prompt: row.prompt }, 'https://dropmic.example/challenge/opaque-token');
     expect(text).toContain(row.prompt);
+    expect(text).toContain('Give this 30-second Drop a try.');
+    expect(text).not.toContain('Take the challenge');
     expect(containsPrivateChallengeData(text)).toBe(true);
     expect(containsPrivateChallengeData(`${text} attempt_id=secret`)).toBe(false);
   });

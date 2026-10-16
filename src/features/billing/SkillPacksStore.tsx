@@ -141,10 +141,9 @@ export function SkillPacksStore({
     <View style={styles.backdrop}>
       <ScrollView contentContainerStyle={styles.content} style={styles.sheet}>
         <View style={styles.header}>
-          <View><Text style={styles.kicker}>MODULAR SPEAKING PACKS</Text><Text accessibilityRole="header" style={styles.title}>Practice for what’s next.</Text></View>
+          <View><Text accessibilityRole="header" style={styles.title}>Win Tomorrow</Text></View>
           <Pressable accessibilityLabel="Close Skill Packs" accessibilityRole="button" onPress={onClose}><Text style={styles.close}>Close</Text></Pressable>
         </View>
-        <Text style={styles.intro}>Each Pack is a separate one-time purchase. It never includes or replaces DropMic Plus.</Text>
         {SKILL_PACKS.map((pack) => {
           const isOwned = ownedSet.has(pack.id);
           const purchaseOption = options.get(pack.id);
@@ -201,10 +200,8 @@ const styles = StyleSheet.create({
   sheet: { backgroundColor: '#fffaf2', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '94%' },
   content: { gap: 18, padding: 22, paddingBottom: 38 },
   header: { alignItems: 'flex-start', flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
-  kicker: { color: '#e4572e', fontSize: 10, fontWeight: '900', letterSpacing: 1.7 },
-  title: { color: '#18332d', fontFamily: 'Georgia', fontSize: 29, fontWeight: '700', marginTop: 5 },
+  title: { color: '#102a43', fontFamily: 'Georgia', fontSize: 32, fontWeight: '700', marginTop: 5 },
   close: { color: '#526c63', fontWeight: '800', padding: 8 },
-  intro: { color: '#526c63', fontSize: 14, lineHeight: 21 },
   packCard: { backgroundColor: '#f4ebdd', borderColor: '#d8caba', borderRadius: 18, borderWidth: 1, gap: 13, padding: 17 },
   packHeader: { alignItems: 'flex-start', flexDirection: 'row', gap: 10, justifyContent: 'space-between' },
   packTitleGroup: { flex: 1, gap: 4 },
@@ -228,7 +225,7 @@ const styles = StyleSheet.create({
   pressureTestText: { color: '#18332d', fontSize: 13, fontWeight: '900' },
   loadingContent: { alignItems: 'center', flexDirection: 'row', gap: 8 },
   loadingText: { color: '#526c63', fontSize: 13 },
-  primary: { alignItems: 'center', backgroundColor: '#18332d', borderRadius: 13, justifyContent: 'center', minHeight: 52, paddingHorizontal: 14 },
+  primary: { alignItems: 'center', backgroundColor: '#1769AA', borderRadius: 13, justifyContent: 'center', minHeight: 52, paddingHorizontal: 14 },
   primaryText: { color: '#fffaf2', fontSize: 14, fontWeight: '900', textAlign: 'center' },
   disabled: { opacity: 0.46 },
   message: { color: '#b03a22', fontSize: 13, lineHeight: 19 },

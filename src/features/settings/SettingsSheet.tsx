@@ -118,11 +118,6 @@ export function SettingsSheet({
             )}
           </View>
 
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Personalization</Text>
-            <Text style={styles.body}>Goals, blockers, fonts, and final brand assets are deferred. Recording and Quick Read stay available without extra setup.</Text>
-          </View>
-
           {error && <Text accessibilityLiveRegion="polite" style={styles.error}>{error}</Text>}
         </ScrollView>
       </View>

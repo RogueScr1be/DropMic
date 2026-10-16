@@ -64,6 +64,7 @@ function props(overrides: Partial<React.ComponentProps<typeof QuickReadFlow>> = 
     onClose: jest.fn(),
     onTakeTwo: jest.fn(),
     prompt: 'What is a small joy you make time for?',
+    reducedMotion: true,
     takeId: 'take-a',
     visible: true,
     ...overrides,
@@ -121,16 +122,18 @@ describe('R0F-D local Take Two journey', () => {
     expect(mockedStart).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps Free and anonymous users free of a CTA, including eligibility failure', async () => {
+  it('shows a Plus-gated Take Two invitation for Free and anonymous users', async () => {
     mockedEligibility.mockResolvedValue(false);
     const free = renderFlow();
     await press(free, 'Upload & get my Quick Read');
     expect(free.root.findAllByProps({ accessibilityLabel: 'Take Two' })).toHaveLength(0);
+    expect(free.root.findByProps({ testID: 'take-two-locked' })).toBeTruthy();
 
     mockedEligibility.mockResolvedValue(false);
     const anonymous = renderFlow({ takeId: 'take-b' });
     await press(anonymous, 'Upload & get my Quick Read');
     expect(anonymous.root.findAllByProps({ accessibilityLabel: 'Take Two' })).toHaveLength(0);
+    expect(anonymous.root.findByProps({ testID: 'take-two-locked' })).toBeTruthy();
   });
 
   it('shows the completed Plus result invitation with accessible copy', async () => {

@@ -16,7 +16,7 @@ export function buildShareCardText(input: ShareCardInput) {
     input.prompt,
     input.speakerVibe ? `Speaker Vibe: ${input.speakerVibe}` : null,
     typeof input.dropScore === 'number' ? `Drop Score: ${input.dropScore}%` : null,
-    'Take the challenge:',
+    typeof input.dropScore === 'number' ? `I scored ${input.dropScore}%. Can you beat that?` : 'Can you take this prompt?',
     input.challengeUrl,
   ].filter((line): line is string => Boolean(line));
   return lines.join('\n');

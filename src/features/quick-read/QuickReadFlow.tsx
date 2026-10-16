@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Animated, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { isCurrentTake } from './attempt-identity';
 import { calculateDropScore } from './drop-score';
@@ -51,6 +51,7 @@ export function QuickReadFlow({
   const [comparison, setComparison] = useState<TakeTwoComparison | null>(null);
   const [comparisonError, setComparisonError] = useState<string | null>(null);
   const [plusEligible, setPlusEligible] = useState(false);
+  const [plusEligibilityResolved, setPlusEligibilityResolved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [stepTakeId, setStepTakeId] = useState(takeId);
   const activeTakeId = useRef(takeId);
@@ -91,6 +92,7 @@ export function QuickReadFlow({
     runInFlight.current = false;
     takeTwoInFlight.current = false;
     setPlusEligible(false);
+    setPlusEligibilityResolved(false);
     setComparison(null);
     setComparisonError(null);
     onCloseRef.current();
@@ -114,6 +116,7 @@ export function QuickReadFlow({
     setComparisonError(null);
     setError(null);
     setPlusEligible(false);
+    setPlusEligibilityResolved(false);
     onClose();
   };
 
@@ -135,6 +138,7 @@ export function QuickReadFlow({
     setComparison(null);
     setComparisonError(null);
     setPlusEligible(false);
+    setPlusEligibilityResolved(false);
     setError(null);
     setStep('processing');
     void trackEvent('quick_read_requested', { dedupeKey: `quick-read-requested:${requestTakeId}` });
@@ -173,6 +177,12 @@ export function QuickReadFlow({
         void getPlusDisplayEligibility().then((eligible) => {
           if (requestGeneration.current === eligibilityRequestId && isCurrentTake(requestTakeId, activeTakeId.current)) {
             setPlusEligible(eligible);
+            setPlusEligibilityResolved(true);
+          }
+        }).catch(() => {
+          if (requestGeneration.current === eligibilityRequestId && isCurrentTake(requestTakeId, activeTakeId.current)) {
+            setPlusEligible(false);
+            setPlusEligibilityResolved(true);
           }
         });
       }
@@ -246,7 +256,7 @@ export function QuickReadFlow({
           {currentStep === 'consent' && (
             <>
               <Text accessibilityRole="header" style={styles.title}>Quick Read</Text>
-              <Text style={styles.body}>Upload your Drop for analysis of clarity, structure, specificity, and concise word usage.</Text>
+              <Text style={styles.body}>Upload your Drop for analysis of clarity, structure, specificity, and concise word usage. Cloud audio is deleted after analysis; your transcript stays private and is kept for up to 30 days.</Text>
               <FlowButton label="Upload & get my Quick Read" onPress={() => void run()} />
               <FlowButton label="Not now" onPress={close} secondary />
             </>
@@ -267,27 +277,31 @@ export function QuickReadFlow({
 
           {currentStep === 'result' && currentResult && (
             <>
-              <Text accessibilityRole="header" style={styles.title}>Here’s your Quick Read.</Text>
               <SpeakerVibeCard speakerVibe={currentResult.speakerVibe} />
               <ShareCard dropScore={calculateDropScore(currentResult)} prompt={prompt ?? 'Your Drop'} speakerVibe={currentResult.speakerVibe} />
               <View accessibilityLabel="Quick Read scores" style={styles.scoreGrid}>
-                <Score label="Drop Score" value={calculateDropScore(currentResult)} />
-                <Score label="Clarity" value={Math.round(currentResult.clarity * 100)} />
-                <Score label="Structure" value={Math.round(currentResult.structure * 100)} locked={!plusEligible} />
-                <Score label="Directness" value={Math.round(currentResult.concision * 100)} locked={!plusEligible} />
+                <Score label="Drop Score" value={calculateDropScore(currentResult)} reducedMotion={reducedMotion} />
+                <Score label="Clarity" value={Math.round(currentResult.clarity * 100)} reducedMotion={reducedMotion} />
+                <Score label="Structure" value={Math.round(currentResult.structure * 100)} locked={!plusEligible} reducedMotion={reducedMotion} />
+                <Score label="Directness" value={Math.round(currentResult.concision * 100)} locked={!plusEligible} reducedMotion={reducedMotion} />
               </View>
               <FeedbackCard label="WHERE YOU SHINE" text={currentResult.strength} />
               <FeedbackCard label="WHERE YOU NEED WORK" text={currentResult.improvement} />
               <FeedbackCard label="DROP DRILL" text={currentResult.nextDrill} />
-              <Text style={styles.retentionNote}>Cloud audio was deleted after analysis. Transcript retention is limited to 30 days.</Text>
               {!plusEligible && onOpenPlus && <FlowButton label="Unlock full Quick Read with Plus" onPress={onOpenPlus} secondary />}
-              {!takeTwoBaselineRunId && plusEligible && currentRunId && (
+              {!takeTwoBaselineRunId && currentRunId && plusEligibilityResolved && (plusEligible ? (
                 <View accessibilityLabel="Take Two invitation" style={styles.takeTwoCard} testID="take-two-cta">
                   <Text accessibilityRole="header" style={styles.takeTwoTitle}>Take Two</Text>
                   <Text style={styles.takeTwoBody}>Try the same prompt again and compare.</Text>
                   <FlowButton label="Take Two" onPress={startTakeTwo} />
                 </View>
-              )}
+              ) : (
+                <View accessibilityLabel="Take Two locked for Plus" style={styles.takeTwoCard} testID="take-two-locked">
+                  <Text accessibilityRole="header" style={styles.takeTwoTitle}>Take Two</Text>
+                  <Text style={styles.takeTwoBody}>Try the same prompt again and compare both takes with DropMic Plus.</Text>
+                  {onOpenPlus && <FlowButton label="Unlock Take Two with Plus" onPress={onOpenPlus} secondary />}
+                </View>
+              ))}
               {takeTwoBaselineRunId && (
                 <TakeTwoComparisonView
                   comparison={currentComparison}
@@ -383,16 +397,39 @@ function SpeakerVibeCard({ speakerVibe }: { speakerVibe?: QuickReadResult['speak
   );
 }
 
-function Score({ label, value, locked = false }: { label: string; value: number; locked?: boolean }) {
+function Score({ label, value, locked = false, reducedMotion }: { label: string; value: number; locked?: boolean; reducedMotion: boolean }) {
+  const [progress] = useState(() => new Animated.Value(0));
+  const [animatedValue, setAnimatedValue] = useState(0);
+  const displayedValue = reducedMotion ? value : animatedValue;
+
+  useEffect(() => {
+    progress.stopAnimation();
+    progress.setValue(reducedMotion ? 1 : 0);
+    if (locked || reducedMotion) return;
+
+    const listenerId = progress.addListener(({ value: current }) => setAnimatedValue(Math.round(current * value)));
+    const animation = Animated.timing(progress, { duration: 720, toValue: 1, useNativeDriver: false });
+    animation.start();
+    return () => {
+      animation.stop();
+      progress.removeListener(listenerId);
+    };
+  }, [locked, progress, reducedMotion, value]);
+
   return (
     <View accessibilityLabel={locked ? `${label}: locked for free access` : `${label}: ${value} percent`} style={[styles.score, locked && styles.lockedScore]}>
       {locked ? (
         <Text style={styles.lockedValue}>Locked</Text>
       ) : (
-        <View style={styles.scoreValueRow}>
-          <Text style={styles.scoreValue}>{value}</Text>
-          <Text style={styles.scoreUnit}>%</Text>
-        </View>
+        <>
+          <View style={styles.scoreValueRow}>
+            <Text style={styles.scoreValue}>{displayedValue}</Text>
+            <Text style={styles.scoreUnit}>%</Text>
+          </View>
+          <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.scoreTrack}>
+            <Animated.View style={[styles.scoreFill, { width: progress.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }) }]} />
+          </View>
+        </>
       )}
       <Text style={styles.scoreLabel}>{label}</Text>
     </View>
@@ -438,13 +475,14 @@ const styles = StyleSheet.create({
   scoreUnit: { color: '#799087', fontSize: 14, fontWeight: '900' },
   lockedValue: { color: '#799087', fontSize: 18, fontWeight: '900' },
   scoreLabel: { color: '#526c63', fontSize: 12, fontWeight: '800', marginTop: 8 },
-  vibeCard: { backgroundColor: '#102a43', borderRadius: 14, gap: 6, padding: 16 },
+  vibeCard: { backgroundColor: '#102a43', borderRadius: 18, gap: 10, justifyContent: 'center', minHeight: 150, padding: 24 },
   vibeLabel: { color: '#f4c3ac', fontSize: 10, fontWeight: '900', letterSpacing: 1.8 },
-  vibeValue: { color: '#fffaf2', fontFamily: 'Georgia', fontSize: 24, fontWeight: '700', lineHeight: 30 },
+  vibeValue: { color: '#fffaf2', fontFamily: 'Georgia', fontSize: 32, fontWeight: '700', lineHeight: 39 },
+  scoreTrack: { backgroundColor: '#c9d6df', borderRadius: 5, height: 7, marginTop: 12, overflow: 'hidden' },
+  scoreFill: { backgroundColor: '#1769aa', borderRadius: 5, height: '100%' },
   feedbackCard: { backgroundColor: '#f4ebdd', borderRadius: 14, gap: 8, padding: 16 },
   feedbackLabel: { color: '#e4572e', fontSize: 10, fontWeight: '900', letterSpacing: 1.8 },
   feedbackText: { color: '#18332d', fontFamily: 'Georgia', fontSize: 20, fontWeight: '600', lineHeight: 27 },
-  retentionNote: { color: '#799087', fontSize: 12, lineHeight: 18 },
   takeTwoCard: { backgroundColor: '#e7dccb', borderColor: '#c4b5a2', borderRadius: 14, borderWidth: 1, gap: 10, padding: 16 },
   takeTwoTitle: { color: '#18332d', fontFamily: 'Georgia', fontSize: 26, fontWeight: '700', lineHeight: 32 },
   takeTwoBody: { color: '#526c63', fontSize: 15, lineHeight: 22 },

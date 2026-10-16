@@ -29,7 +29,8 @@ describe('Quick Read calibrated provider prompt', () => {
     expect(FEEDBACK_SYSTEM_PROMPT).toContain('Never say the speaker or the user in coaching text.');
     expect(FEEDBACK_SYSTEM_PROMPT).toContain('an observable success condition');
     expect(FEEDBACK_SYSTEM_PROMPT).toContain('Great job, Nice work, or You communicated well');
-    expect(FEEDBACK_SYSTEM_PROMPT).toContain('Do not invent a quotation or detail.');
+    expect(FEEDBACK_SYSTEM_PROMPT).toContain('Never quote the transcript or invent a detail.');
+    expect(FEEDBACK_SYSTEM_PROMPT).toContain('briefly paraphrase one relevant point when available');
     expect(FEEDBACK_SYSTEM_PROMPT).toContain('Sound like a supportive speaking partner, not a teacher grading an essay.');
     expect(FEEDBACK_SYSTEM_PROMPT).toContain('The speaker, The user, You present, You demonstrate, You imply');
     expect(FEEDBACK_SYSTEM_PROMPT).toContain('This strengthens the contrast, This helps your point land, or Concision');

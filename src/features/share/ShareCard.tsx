@@ -14,13 +14,13 @@ export function ShareCard({
   speakerVibe?: string | null;
 }) {
   return <View accessibilityLabel="DropMic share card" style={styles.card}>
-    <View style={styles.brandRow}><Text style={styles.brand}>DropMic</Text><Text style={styles.badge}>SPEAK UP</Text></View>
+    <View style={styles.brandRow}><Text style={styles.brand}>DropMic</Text></View>
     <Text style={styles.prompt}>{prompt}</Text>
     {(speakerVibe || typeof dropScore === 'number') && <View style={styles.resultRow}>
       {speakerVibe && <View><Text style={styles.label}>SPEAKER VIBE</Text><Text style={styles.value}>{speakerVibe}</Text></View>}
       {typeof dropScore === 'number' && <View><Text style={styles.label}>DROP SCORE</Text><Text style={styles.score}>{dropScore}%</Text></View>}
     </View>}
-    <Text style={styles.cta}>Take the challenge. Pass it on.</Text>
+    <Text style={styles.cta}>{typeof dropScore === 'number' ? `I scored ${dropScore}%. Can you beat that?` : 'Can you take this prompt?'}</Text>
     {challengeUrl && <Text numberOfLines={1} style={styles.url}>{challengeUrl}</Text>}
   </View>;
 }
@@ -29,7 +29,6 @@ const styles = StyleSheet.create({
   card: { backgroundColor: colors.ink, borderRadius: radii.lg, gap: spacing.lg, overflow: 'hidden', padding: spacing.xl },
   brandRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
   brand: { color: colors.white, fontFamily: typography.displayFamily, fontSize: 23, fontWeight: '700' },
-  badge: { color: colors.coralSoft, ...typography.eyebrow },
   prompt: { color: colors.white, fontFamily: typography.displayFamily, fontSize: 25, fontWeight: '700', lineHeight: 32 },
   resultRow: { borderColor: colors.boardRail, borderTopWidth: 1, flexDirection: 'row', gap: spacing.xxl, paddingTop: spacing.lg },
   label: { color: colors.coralSoft, ...typography.eyebrow },

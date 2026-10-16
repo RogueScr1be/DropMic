@@ -38,6 +38,7 @@ function props(overrides: Partial<React.ComponentProps<typeof QuickReadFlow>> = 
     audioUri: 'blob:a',
     idempotencyKey: 'key-a',
     onClose: jest.fn(),
+    reducedMotion: true,
     takeId: 'take-a',
     visible: true,
     ...overrides,

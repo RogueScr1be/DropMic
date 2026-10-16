@@ -42,7 +42,7 @@ export function toPublicChallenge(row: Record<string, unknown>, token: string, n
 }
 
 export function challengeShareText(challenge: Pick<PublicChallenge, 'prompt' | 'durationSeconds'>, url: string) {
-  return `DropMic challenge: ${challenge.prompt}\nTake the ${challenge.durationSeconds}-second speaking challenge.\n${url}`;
+  return `DropMic: ${challenge.prompt}\nGive this ${challenge.durationSeconds}-second Drop a try.\n${url}`;
 }
 
 export function containsPrivateChallengeData(value: string) {

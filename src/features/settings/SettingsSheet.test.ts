@@ -41,6 +41,7 @@ describe('SettingsSheet', () => {
     });
 
     expect(textContent(renderer!.toJSON())).toContain('record anonymously');
+    expect(textContent(renderer!.toJSON())).not.toContain('Personalization');
     const signIn = renderer!.root.findByProps({ accessibilityLabel: 'Returning user? Sign in' });
     act(() => signIn.props.onPress());
     expect(onOpenSignIn).toHaveBeenCalledTimes(1);

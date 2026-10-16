@@ -102,16 +102,17 @@ export function PlusPaywall({ onAccessUpdated, onClose, visible }: { onAccessUpd
   return <Modal accessibilityViewIsModal animationType="slide" onRequestClose={onClose} transparent visible={visible}>
     <View style={styles.backdrop}><ScrollView contentContainerStyle={styles.content} style={styles.sheet}>
       <View style={styles.header}><Text style={styles.kicker}>DROPMIC PLUS</Text><Pressable accessibilityLabel="Close Plus" onPress={onClose}><Text style={styles.close}>Close</Text></Pressable></View>
-      <Text accessibilityRole="header" style={styles.title}>More room to find your voice.</Text>
-      <Text style={styles.body}>Unlock 60- and 90-second Drops, unlimited Saved Drops, and the full Quick Read. Choose monthly or annual billing. An introductory offer may be available to eligible subscribers; Apple confirms eligibility at checkout.</Text>
+      <Text accessibilityRole="header" style={styles.title}>Find Your Voice.</Text>
+      <Text style={styles.body}>Give your thoughts room to come out. Practice for 60 or 90 seconds, get the full Quick Read, and keep the takes you want to revisit.</Text>
       {products.map((product) => <Pressable key={product.identifier ?? product.title} accessibilityRole="radio" accessibilityState={{ selected: selected === product.identifier && product.identifier !== null }} onPress={() => product.identifier && setSelected(product.identifier)} style={[styles.product, selected === product.identifier && product.identifier !== null && styles.selected]}>
-        <View><Text style={styles.productTitle}>{product.title}</Text><Text style={styles.productDescription}>{product.description}</Text></View><Text style={styles.price}>{product.price}</Text>
+        <View style={styles.productCopy}><Text style={styles.productTitle}>{product.title}</Text><Text style={styles.productDescription}>{product.description}</Text></View><Text style={styles.price}>{product.price}</Text>
       </Pressable>)}
       {message && <Text accessibilityLiveRegion="polite" style={styles.message}>{message}</Text>}
       <Pressable accessibilityRole="button" accessibilityLabel="Purchase Plus" disabled={busy} onPress={() => void purchase()} style={styles.primary}><Text style={styles.primaryText}>{busy ? 'Working…' : 'Get Plus'}</Text></Pressable>
       <Pressable accessibilityRole="button" accessibilityLabel="Restore purchases" disabled={busy} onPress={() => void restore()} style={styles.secondary}><Text style={styles.secondaryText}>Restore purchases</Text></Pressable>
       <Pressable accessibilityRole="button" accessibilityLabel="Manage subscription" onPress={() => void revenueCatAdapter.presentCustomerCenter?.()} style={styles.secondary}><Text style={styles.secondaryText}>Manage subscription</Text></Pressable>
-      <View style={styles.legal}><Text style={styles.legalText}>Subscriptions renew automatically unless cancelled. Terms and Privacy apply.</Text><Pressable onPress={() => { const url = process.env.EXPO_PUBLIC_DROPMIC_TERMS_URL?.trim(); if (url) void Linking.openURL(url); else setMessage('Terms link is not configured yet.'); }}><Text style={styles.link}>Terms</Text></Pressable><Pressable onPress={() => { const url = process.env.EXPO_PUBLIC_DROPMIC_PRIVACY_URL?.trim(); if (url) void Linking.openURL(url); else setMessage('Privacy link is not configured yet.'); }}><Text style={styles.link}>Privacy</Text></Pressable></View>
+      <Text style={styles.legalText}>Subscriptions renew automatically unless cancelled.</Text>
+      <View style={styles.legalLinks}><Pressable accessibilityRole="link" onPress={() => { const url = process.env.EXPO_PUBLIC_DROPMIC_TERMS_URL?.trim(); if (url) void Linking.openURL(url); else setMessage('Terms link is not configured yet.'); }}><Text style={styles.link}>Terms</Text></Pressable><Pressable accessibilityRole="link" onPress={() => { const url = process.env.EXPO_PUBLIC_DROPMIC_PRIVACY_URL?.trim(); if (url) void Linking.openURL(url); else setMessage('Privacy link is not configured yet.'); }}><Text style={styles.link}>Privacy</Text></Pressable></View>
     </ScrollView></View>
   </Modal>;
 }
@@ -125,17 +126,18 @@ const styles = StyleSheet.create({
   close: { color: '#526c63', fontWeight: '700', padding: 8 },
   title: { color: '#18332d', fontFamily: 'Georgia', fontSize: 32, fontWeight: '700', lineHeight: 38 },
   body: { color: '#526c63', fontSize: 16, lineHeight: 24 },
-  product: { alignItems: 'center', backgroundColor: '#f4ebdd', borderColor: '#c4b5a2', borderRadius: 14, borderWidth: 1, flexDirection: 'row', justifyContent: 'space-between', padding: 16 },
+  product: { alignItems: 'center', backgroundColor: '#f4ebdd', borderColor: '#c4b5a2', borderRadius: 14, borderWidth: 1, flexDirection: 'row', gap: 12, justifyContent: 'space-between', padding: 16 },
   selected: { backgroundColor: '#e7dccb', borderColor: '#18332d', borderWidth: 2 },
   productTitle: { color: '#18332d', fontSize: 16, fontWeight: '900' },
-  productDescription: { color: '#526c63', fontSize: 13, marginTop: 4 },
-  price: { color: '#18332d', fontFamily: 'Georgia', fontSize: 20, fontWeight: '700' },
+  productCopy: { flex: 1, minWidth: 0 },
+  productDescription: { color: '#526c63', fontSize: 13, lineHeight: 18, marginTop: 4 },
+  price: { color: '#18332d', flexShrink: 0, fontFamily: 'Georgia', fontSize: 19, fontWeight: '700', textAlign: 'right' },
   message: { color: '#e4572e', fontSize: 14, lineHeight: 20 },
   primary: { alignItems: 'center', backgroundColor: '#18332d', borderRadius: 14, minHeight: 58, justifyContent: 'center' },
   primaryText: { color: '#fffaf2', fontSize: 16, fontWeight: '900' },
   secondary: { alignItems: 'center', borderColor: '#c4b5a2', borderRadius: 14, borderWidth: 1, minHeight: 52, justifyContent: 'center' },
   secondaryText: { color: '#18332d', fontSize: 15, fontWeight: '800' },
-  legal: { alignItems: 'center', gap: 8, paddingTop: 4 },
+  legalLinks: { alignItems: 'center', flexDirection: 'row', gap: 28, justifyContent: 'center', paddingTop: 2 },
   legalText: { color: '#799087', fontSize: 12, lineHeight: 18, textAlign: 'center' },
   link: { color: '#e4572e', fontSize: 13, fontWeight: '800' },
 });
