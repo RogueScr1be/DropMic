@@ -1,4 +1,5 @@
 import React from 'react';
+import { Animated } from 'react-native';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
@@ -167,6 +168,21 @@ describe('R0F-D local Take Two journey', () => {
     const visibleUnits = renderer.root.findAllByProps({ children: '%' });
     expect(visibleUnits.length).toBeGreaterThan(0);
     expect(visibleUnits.every((unit) => !('marginTop' in (unit.props.style ?? {})))).toBe(true);
+  });
+
+  it('animates visible score counters and bars when Reduced Motion is off', async () => {
+    mockedEligibility.mockResolvedValue(false);
+    const animation = { start: jest.fn(), stop: jest.fn() } as unknown as ReturnType<typeof Animated.timing>;
+    const timing = jest.spyOn(Animated, 'timing').mockReturnValue(animation);
+    const renderer = renderFlow({ reducedMotion: false });
+
+    await press(renderer, 'Upload & get my Quick Read');
+
+    expect(timing).toHaveBeenCalledTimes(2);
+    expect(timing).toHaveBeenCalledWith(expect.any(Animated.Value), { duration: 720, toValue: 1, useNativeDriver: false });
+    act(() => renderer.unmount());
+    expect(animation.stop).toHaveBeenCalledTimes(2);
+    timing.mockRestore();
   });
 
   it('reveals the paid-only tiles through the existing entitlement boundary', async () => {
