@@ -10,7 +10,7 @@
     "ios": {
       "icon": "./assets/expo.icon",
       "bundleIdentifier": "com.prentisswhitley.dropmic",
-      "buildNumber": "1",
+      "buildNumber": "2",
       "supportsTablet": true,
       "associatedDomains": ["applinks:thedropmic.com"]
     },
