@@ -6,7 +6,7 @@
       "environment": "production",
       "ios": {
         "simulator": false,
-        "image": "latest"
+        "image": "sdk-57"
       }
     },
     "internal": {
