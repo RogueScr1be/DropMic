@@ -12,7 +12,9 @@
       "bundleIdentifier": "com.prentisswhitley.dropmic",
       "buildNumber": "3",
       "supportsTablet": true,
-      "associatedDomains": ["applinks:thedropmic.com"]
+      "associatedDomains": [
+        "applinks:thedropmic.com"
+      ]
     },
     "android": {
       "versionCode": 1,
@@ -36,7 +38,7 @@
       ],
       "./plugins/with-ios-scene-lifecycle",
       [
-      "expo-splash-screen",
+        "expo-splash-screen",
         {
           "backgroundColor": "#208AEF",
           "image": "./assets/images/splash-icon.png",
@@ -49,7 +51,8 @@
           "microphonePermission": "Allow DropMic to access your microphone for speaking practice.",
           "enableBackgroundRecording": false
         }
-      ]
+      ],
+      "expo-asset"
     ],
     "experiments": {
       "typedRoutes": true,
