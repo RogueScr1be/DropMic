@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import { File as ExpoFile } from 'expo-file-system';
+import { FunctionsHttpError } from '@supabase/supabase-js';
 
 import { parseQuickReadResult, type QuickReadResult } from '../../../supabase/functions/_shared/quick-read-contract';
 import { isSupabaseConfigured, supabase } from '@/features/auth/auth-client';
@@ -9,6 +10,45 @@ type AnalysisRun = {
   audio_object_path: string;
   status: string;
 };
+
+const SAFE_FUNCTION_ERROR_CODES = new Set([
+  'analysis_claim_failed',
+  'analysis_failed',
+  'analysis_persistence_failed',
+  'audio_cleanup_failed',
+  'audio_unavailable',
+  'authentication_required',
+  'completed_result_missing',
+  'feedback_provider_rejected',
+  'feedback_provider_transient',
+  'invalid_model_json',
+  'invalid_model_response_shape',
+  'invalid_model_schema',
+  'invalid_transcription_response',
+  'metrics_write_failed',
+  'owned_analysis_run_required',
+  'owned_attempt_required',
+  'permanent_account_required',
+  'provider_attempt_record_failed',
+  'provider_timeout',
+  'provider_transport',
+  'quick_read_unavailable',
+  'result_lookup_failed',
+  'result_write_failed',
+  'run_lookup_failed',
+  'run_id_required',
+  'run_update_failed',
+  'transcript_lookup_failed',
+  'transcript_too_large',
+  'transcript_write_failed',
+  'transcription_provider_rejected',
+  'transcription_provider_transient',
+  'unsupported_audio',
+]);
+
+function safeFunctionErrorCode(value: unknown): string | undefined {
+  return typeof value === 'string' && SAFE_FUNCTION_ERROR_CODES.has(value) ? value : undefined;
+}
 
 export class QuickReadServiceError extends Error {
   code: string;
@@ -96,12 +136,23 @@ export async function startQuickRead(input: {
   const invocation = await client.functions.invoke('quick-read', {
     body: { runId: run.id },
   });
-  const payload = invocation.data as { status?: string; result?: unknown; error?: string } | null;
+  let payload = invocation.data as { status?: string; result?: unknown; error?: unknown } | null;
+  if (!payload && invocation.error instanceof FunctionsHttpError) {
+    try {
+      const body: unknown = await invocation.error.context.json();
+      if (body && typeof body === 'object' && !Array.isArray(body)) {
+        payload = body as { status?: string; result?: unknown; error?: unknown };
+      }
+    } catch {
+      // Keep the generic fallback when the function error body is not valid JSON.
+    }
+  }
   if (invocation.error && !payload) {
     throw new QuickReadServiceError(friendlyError('quick_read_failed'));
   }
   if (payload?.status === 'failed') {
-    throw new QuickReadServiceError(friendlyError(payload.error), payload.error ?? 'analysis_failed');
+    const code = safeFunctionErrorCode(payload.error) ?? 'analysis_failed';
+    throw new QuickReadServiceError(friendlyError(code), code);
   }
   if (payload?.status !== 'completed') {
     throw new QuickReadServiceError('Quick Read is still processing. Try again in a moment.', 'processing');

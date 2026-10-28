@@ -12,7 +12,7 @@ const retrySource = readFileSync('supabase/functions/_shared/retry-policy.ts', '
 
 describe('Quick Read calibrated provider prompt', () => {
   it('defines the transcript-only score rubric and disallowed delivery claims', () => {
-    expect(FEEDBACK_SYSTEM_PROMPT).toContain('Scores are numbers from 0 to 1 in increments of 0.05');
+    expect(FEEDBACK_SYSTEM_PROMPT).toContain('Scores are finite numbers from 0 to 1.');
     expect(FEEDBACK_SYSTEM_PROMPT).toContain('Clarity means how easily a reader can understand the intended meaning from the transcript.');
     expect(FEEDBACK_SYSTEM_PROMPT).toContain('Structure means whether the response has a discernible point, logical progression, and ending.');
     expect(FEEDBACK_SYSTEM_PROMPT).toContain('Specificity means whether the response uses concrete reasons, examples, details, or distinctions.');
@@ -29,8 +29,8 @@ describe('Quick Read calibrated provider prompt', () => {
     expect(FEEDBACK_SYSTEM_PROMPT).toContain('Never say the speaker or the user in coaching text.');
     expect(FEEDBACK_SYSTEM_PROMPT).toContain('an observable success condition');
     expect(FEEDBACK_SYSTEM_PROMPT).toContain('Great job, Nice work, or You communicated well');
-    expect(FEEDBACK_SYSTEM_PROMPT).toContain('Never quote the transcript or invent a detail.');
-    expect(FEEDBACK_SYSTEM_PROMPT).toContain('briefly paraphrase one relevant point when available');
+    expect(FEEDBACK_SYSTEM_PROMPT).toContain('Never quote transcript wording or invent a detail.');
+    expect(FEEDBACK_SYSTEM_PROMPT).toContain('name a specific claim or gap from this Drop');
     expect(FEEDBACK_SYSTEM_PROMPT).toContain('Sound like a supportive speaking partner, not a teacher grading an essay.');
     expect(FEEDBACK_SYSTEM_PROMPT).toContain('The speaker, The user, You present, You demonstrate, You imply');
     expect(FEEDBACK_SYSTEM_PROMPT).toContain('This strengthens the contrast, This helps your point land, or Concision');
@@ -74,6 +74,9 @@ describe('Quick Read calibrated provider prompt', () => {
       'nextDrill',
       'speaker_vibe',
     ]);
+    expect(quickReadResultSchema.properties.strength.description).toContain('no more than 24 words');
+    expect(quickReadResultSchema.properties.improvement.description).toContain('no more than 24 words');
+    expect(quickReadResultSchema.properties.nextDrill.description).toContain('exactly 60 seconds');
     expect(edgeSource).toContain('type: \'json_schema\'');
     expect(edgeSource).toContain('strict: true');
   });

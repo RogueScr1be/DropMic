@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { FunctionsHttpError } from '@supabase/supabase-js';
 
 /* eslint-disable import/first */
 
@@ -19,7 +20,7 @@ jest.mock('@/features/auth/auth-client', () => ({
 }));
 
 import { supabase } from '@/features/auth/auth-client';
-import { startQuickRead } from './quick-read-service';
+import { QuickReadServiceError, startQuickRead } from './quick-read-service';
 
 const mockedSupabase = supabase as any;
 
@@ -111,5 +112,94 @@ describe('Quick Read service', () => {
       idempotencyKey: 'key-1',
     });
     expect(mockedSupabase.storage.from).not.toHaveBeenCalled();
+  });
+
+  it('does not expose an arbitrary function error string as a client code', async () => {
+    mockedSupabase.auth.getSession.mockResolvedValue({
+      data: { session: { user: { is_anonymous: false } } },
+      error: null,
+    });
+    mockedSupabase.rpc.mockResolvedValue({
+      data: { id: 'run-1', audio_object_path: 'quick-read/user/attempt/source.wav', status: 'completed' },
+      error: null,
+    });
+    mockedSupabase.functions.invoke.mockResolvedValue({
+      data: {
+        status: 'failed',
+        error: 'private transcript excerpt: SENTINEL_PRIVATE_TEXT_71f3',
+      },
+      error: null,
+    });
+
+    let caught: unknown;
+    try {
+      await startQuickRead({
+        attemptId: 'attempt-1',
+        audioUri: 'blob:local',
+        audioExtension: 'wav',
+        idempotencyKey: 'key-1',
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(QuickReadServiceError);
+    expect(caught).toMatchObject({ code: 'analysis_failed' });
+    expect((caught as Error).message).not.toContain('SENTINEL_PRIVATE_TEXT_71f3');
+  });
+
+  it('preserves an allowlisted Quick Read failure code for the existing friendly message', async () => {
+    mockedSupabase.auth.getSession.mockResolvedValue({
+      data: { session: { user: { is_anonymous: false } } },
+      error: null,
+    });
+    mockedSupabase.rpc.mockResolvedValue({
+      data: { id: 'run-1', audio_object_path: 'quick-read/user/attempt/source.wav', status: 'completed' },
+      error: null,
+    });
+    mockedSupabase.functions.invoke.mockResolvedValue({
+      data: { status: 'failed', error: 'invalid_model_schema' },
+      error: null,
+    });
+
+    await expect(startQuickRead({
+      attemptId: 'attempt-1',
+      audioUri: 'blob:local',
+      audioExtension: 'wav',
+      idempotencyKey: 'key-1',
+    })).rejects.toMatchObject({
+      code: 'invalid_model_schema',
+      message: 'Quick Read could not validate the feedback. Your recording was kept for retry.',
+    });
+  });
+
+  it('reads the safe failure code from an HTTP error response body', async () => {
+    mockedSupabase.auth.getSession.mockResolvedValue({
+      data: { session: { user: { is_anonymous: false } } },
+      error: null,
+    });
+    mockedSupabase.rpc.mockResolvedValue({
+      data: { id: 'run-1', audio_object_path: 'quick-read/user/attempt/source.wav', status: 'completed' },
+      error: null,
+    });
+    const context = {
+      status: 422,
+      json: jest.fn(async () => ({ status: 'failed', error: 'invalid_model_schema' })),
+    };
+    mockedSupabase.functions.invoke.mockResolvedValue({
+      data: null,
+      error: new FunctionsHttpError(context),
+    });
+
+    await expect(startQuickRead({
+      attemptId: 'attempt-1',
+      audioUri: 'blob:local',
+      audioExtension: 'wav',
+      idempotencyKey: 'key-1',
+    })).rejects.toMatchObject({
+      code: 'invalid_model_schema',
+      message: 'Quick Read could not validate the feedback. Your recording was kept for retry.',
+    });
+    expect(context.json).toHaveBeenCalledTimes(1);
   });
 });

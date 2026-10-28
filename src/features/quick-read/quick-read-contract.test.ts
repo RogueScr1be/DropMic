@@ -102,13 +102,7 @@ describe('Quick Read provider response boundary', () => {
     expect(parseFeedbackResponse({ choices: [{ finish_reason: 'length', message: { content: null } }] })).toEqual({
       ok: false,
       code: 'invalid_model_response_shape',
-      diagnostics: {
-        finishReason: 'length',
-        messagePresent: true,
-        contentType: 'object',
-        contentLength: null,
-        refusalPresent: false,
-      },
+      diagnostics: { field: 'response', reason: 'invalid_shape' },
     });
   });
 
@@ -116,7 +110,7 @@ describe('Quick Read provider response boundary', () => {
     expect(parseFeedbackResponse({ choices: [{ message: { content: '{"clarity":' } }] })).toEqual({
       ok: false,
       code: 'invalid_model_json',
-      diagnostics: { contentLength: 11 },
+      diagnostics: { field: 'response', reason: 'invalid_json' },
     });
   });
 
@@ -124,7 +118,7 @@ describe('Quick Read provider response boundary', () => {
     expect(parseFeedbackResponse({ choices: [{ message: { content: JSON.stringify({ clarity: 0.8 }) } }] })).toEqual({
       ok: false,
       code: 'invalid_model_schema',
-      diagnostics: { keys: ['clarity'] },
+      diagnostics: { field: 'structure', reason: 'missing_field' },
     });
   });
 
@@ -180,12 +174,57 @@ describe('Quick Read provider response boundary', () => {
     });
   });
 
-  it('rejects scores outside the declared increments', () => {
+  it('accepts any in-range score and rejects invalid score types or ranges', () => {
     const content = JSON.parse(validContent) as Record<string, unknown>;
     content.clarity = 0.83;
     expect(parseFeedbackResponse({ choices: [{ message: { content: JSON.stringify(content) } }] })).toMatchObject({
+      ok: true,
+    });
+
+    content.clarity = 1.01;
+    expect(parseFeedbackResponse({ choices: [{ message: { content: JSON.stringify(content) } }] })).toEqual({
       ok: false,
       code: 'invalid_model_schema',
+      diagnostics: { field: 'clarity', reason: 'out_of_range' },
+    });
+
+    content.clarity = '0.8';
+    expect(parseFeedbackResponse({ choices: [{ message: { content: JSON.stringify(content) } }] })).toEqual({
+      ok: false,
+      code: 'invalid_model_schema',
+      diagnostics: { field: 'clarity', reason: 'invalid_type' },
+    });
+  });
+
+  it('redacts unknown field names and private provider values from diagnostics', () => {
+    const content = JSON.parse(validContent) as Record<string, unknown>;
+    content.privateTranscriptLeak = 'SENTINEL_PRIVATE_TEXT_71f3';
+    const rejected = parseFeedbackResponse({
+      choices: [{ message: { content: JSON.stringify(content) } }],
+    });
+
+    expect(rejected).toEqual({
+      ok: false,
+      code: 'invalid_model_schema',
+      diagnostics: { field: 'output', reason: 'unexpected_field' },
+    });
+    expect(JSON.stringify(rejected)).not.toContain('privateTranscriptLeak');
+    expect(JSON.stringify(rejected)).not.toContain('SENTINEL_PRIVATE_TEXT_71f3');
+  });
+
+  it('reports only allowlisted fields and reason codes for coaching constraints', () => {
+    const content = JSON.parse(validContent) as Record<string, unknown>;
+    content.strength = 'one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twenty-one twenty-two twenty-three twenty-four twenty-five';
+    expect(parseFeedbackResponse({ choices: [{ message: { content: JSON.stringify(content) } }] })).toMatchObject({
+      ok: false,
+      diagnostics: { field: 'strength', reason: 'word_limit' },
+    });
+
+    content.strength = 'A clear opening.';
+    content.nextDrill = 'Practice one example without stating the required duration.';
+    expect(parseFeedbackResponse({ choices: [{ message: { content: JSON.stringify(content) } }] })).toMatchObject({
+      ok: false,
+      diagnostics: { field: 'nextDrill', reason: 'duration_required' },
     });
   });
 });
