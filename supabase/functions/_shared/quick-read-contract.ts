@@ -1,3 +1,12 @@
+// @ts-ignore Deno requires explicit extensions for local function imports.
+import { calculateRubricDimensionScores, RUBRIC_ANCHORS, RUBRIC_CRITERION_IDS, summarizeRubric, type RubricAssessment, type RubricCriterionId, type RubricScoreMap } from './dropmic-rubric.ts';
+// @ts-ignore Deno requires explicit extensions for local function imports.
+import { DROPMIC_EVALUATOR_PROMPT_VERSION, DROPMIC_RESULT_CONTRACT_VERSION, DROPMIC_RUBRIC_VERSION, DROPMIC_TASK_PROFILE_VERSION } from './quick-read-versions.ts';
+
+export { DROPMIC_RESULT_CONTRACT_VERSION };
+
+export type QuickReadRubricEvidence = Record<RubricCriterionId, { excerpt: string; rationale: string; reasonCode: string }>;
+
 export type QuickReadResult = {
   clarity: number;
   structure: number;
@@ -6,106 +15,110 @@ export type QuickReadResult = {
   strength: string;
   improvement: string;
   nextDrill: string;
-  speakerVibe?: SpeakerVibe;
+  rubricVersion?: string;
+  taskProfileVersion?: string;
+  evaluatorPromptVersion?: string;
+  rubricScores?: RubricScoreMap;
+  rubricEvidence?: QuickReadRubricEvidence;
+  taskMet?: boolean;
 };
 
-export const SPEAKER_VIBES = [
-  'The Storyteller',
-  'The Straight Shooter',
-  'The Debater',
-  'The Connector',
-  'The Explorer',
-  'The Builder',
-  'The Analyst',
-  'The Spark',
-] as const;
+export type QuickReadResponseContract = 'legacy' | 'dropmic-rubric-v1' | typeof DROPMIC_RESULT_CONTRACT_VERSION;
 
-export type SpeakerVibe = (typeof SPEAKER_VIBES)[number];
+export function shapeQuickReadResponse(
+  result: QuickReadResult,
+  contract: QuickReadResponseContract,
+  evidence?: QuickReadRubricEvidence | null,
+  plusEligible = false,
+) {
+  if (contract === DROPMIC_RESULT_CONTRACT_VERSION) {
+    const detailedResult = evidence && plusEligible ? { ...result, rubricEvidence: evidence } : result;
+    return { status: 'completed' as const, result: detailedResult };
+  }
+  if (contract === 'dropmic-rubric-v1') return { status: 'completed' as const, result };
+  if (result.taskMet === false) return { status: 'failed' as const, error: 'task_not_met' as const };
+  return {
+    status: 'completed' as const,
+    result: {
+      clarity: result.clarity,
+      structure: result.structure,
+      specificity: result.specificity,
+      concision: result.concision,
+      strength: result.strength,
+      improvement: result.improvement,
+      nextDrill: result.nextDrill,
+    },
+  };
+}
+
+export function parseQuickReadRubricEvidence(value: unknown): QuickReadRubricEvidence | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const expectedIds = new Set<string>(RUBRIC_CRITERION_IDS);
+  if (Object.keys(record).length !== RUBRIC_CRITERION_IDS.length || Object.keys(record).some((id) => !expectedIds.has(id))) return null;
+  const parsed: Partial<QuickReadRubricEvidence> = {};
+  for (const id of RUBRIC_CRITERION_IDS) {
+    const candidate = record[id];
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null;
+    const item = candidate as Record<string, unknown>;
+    if (Object.keys(item).some((key) => !['excerpt', 'rationale', 'reasonCode'].includes(key))) return null;
+    if (
+      typeof item.excerpt !== 'string' || !item.excerpt.trim() || item.excerpt.length > 180 ||
+      typeof item.rationale !== 'string' || !item.rationale.trim() || item.rationale.length > 240 || wordCount(item.rationale) > 28 ||
+      typeof item.reasonCode !== 'string' || !(RUBRIC_ANCHORS[id].reasons as readonly string[]).includes(item.reasonCode)
+    ) return null;
+    parsed[id] = { excerpt: item.excerpt, rationale: item.rationale, reasonCode: item.reasonCode };
+  }
+  return parsed as QuickReadRubricEvidence;
+}
+
+const criteriaProperties = Object.fromEntries(RUBRIC_CRITERION_IDS.map((id) => [id, {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    score: { type: 'integer', enum: [-1, 0, 1, 2], description: '-1 means unscorable; never convert it to zero.' },
+    evidence: { type: 'string', minLength: 1, maxLength: 180, description: 'One exact, contiguous excerpt from the supplied transcript that identifies the relevant scope. For an absence, cite the nearest relevant scope and explain what is missing.' },
+    rationale: { type: 'string', minLength: 1, maxLength: 240, description: 'One concise, direct-address explanation tied to the criterion anchor. Do not quote transcript text.' },
+    reasonCode: { type: 'string', enum: RUBRIC_ANCHORS[id].reasons },
+  },
+  required: ['score', 'evidence', 'rationale', 'reasonCode'],
+}])) as Record<RubricCriterionId, unknown>;
 
 export const quickReadResultSchema = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    clarity: { type: 'number', minimum: 0, maximum: 1 },
-    structure: { type: 'number', minimum: 0, maximum: 1 },
-    specificity: { type: 'number', minimum: 0, maximum: 1 },
-    concision: { type: 'number', minimum: 0, maximum: 1 },
-    strength: { type: 'string', minLength: 1, maxLength: 1200, description: 'One or two transcript-supported sentences, no more than 24 words total.' },
-    improvement: { type: 'string', minLength: 1, maxLength: 1200, description: 'One or two transcript-supported sentences, no more than 24 words total.' },
-    nextDrill: { type: 'string', minLength: 1, maxLength: 1200, description: 'One concrete practice action, no more than 28 words, requiring exactly 60 seconds and an observable success condition.' },
-    speaker_vibe: { type: 'string', enum: SPEAKER_VIBES },
+    criteria: {
+      type: 'object',
+      additionalProperties: false,
+      properties: criteriaProperties,
+      required: RUBRIC_CRITERION_IDS,
+    },
   },
-  required: ['clarity', 'structure', 'specificity', 'concision', 'strength', 'improvement', 'nextDrill', 'speaker_vibe'],
+  required: ['criteria'],
 } as const;
-
-const clientResultKeys = ['clarity', 'structure', 'specificity', 'concision', 'strength', 'improvement', 'nextDrill'] as const;
-
-function isSpeakerVibe(value: unknown): value is SpeakerVibe {
-  return typeof value === 'string' && (SPEAKER_VIBES as readonly string[]).includes(value);
-}
 
 function wordCount(value: string) {
   return value.trim() ? value.trim().split(/\s+/u).length : 0;
 }
 
-function isValidScore(value: unknown): value is number {
-  return (
-    typeof value === 'number' &&
-    Number.isFinite(value) &&
-    value >= 0 &&
-    value <= 1
-  );
+function isDimensionScore(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
 }
 
-function isSixtySecondDrill(value: string) {
-  return /\b60(?:-second|\s+seconds?)\b/iu.test(value);
+function isShortCoaching(value: string) {
+  return value.trim().length > 0 && value.length <= 1200 && wordCount(value) <= 28;
 }
 
-function parseResultFields(record: Record<string, unknown>, speakerVibe: unknown, requireSpeakerVibe: boolean) {
-  const allowedKeys = requireSpeakerVibe
-    ? [...clientResultKeys, 'speaker_vibe']
-    : [...clientResultKeys, 'speakerVibe'];
-  const keys = Object.keys(record);
-  if (keys.some((key) => !allowedKeys.includes(key)) || clientResultKeys.some((key) => !(key in record))) {
-    return null;
+function parseLegacyResult(record: Record<string, unknown>): QuickReadResult | null {
+  const allowed = new Set(['clarity', 'structure', 'specificity', 'concision', 'strength', 'improvement', 'nextDrill', 'speaker_vibe', 'speakerVibe']);
+  if (Object.keys(record).some((key) => !allowed.has(key))) return null;
+  for (const key of ['clarity', 'structure', 'specificity', 'concision'] as const) {
+    if (!isDimensionScore(record[key])) return null;
   }
-  if (requireSpeakerVibe && !('speaker_vibe' in record)) {
-    return null;
-  }
-
-  if (requireSpeakerVibe ? !isSpeakerVibe(speakerVibe) : speakerVibe !== undefined && !isSpeakerVibe(speakerVibe)) {
-    return null;
-  }
-
-  const scores = ['clarity', 'structure', 'specificity', 'concision'] as const;
-  for (const key of scores) {
-    const score = record[key];
-    if (!isValidScore(score)) {
-      return null;
-    }
-  }
-
   for (const key of ['strength', 'improvement', 'nextDrill'] as const) {
-    const text = record[key];
-    if (typeof text !== 'string' || text.trim().length === 0 || text.length > 1200) {
-      return null;
-    }
+    if (typeof record[key] !== 'string' || !isShortCoaching(record[key] as string)) return null;
   }
-
-  if (requireSpeakerVibe) {
-    const strength = (record.strength as string).trim();
-    const improvement = (record.improvement as string).trim();
-    const nextDrill = (record.nextDrill as string).trim();
-    if (
-      wordCount(strength) > 24
-      || wordCount(improvement) > 24
-      || wordCount(nextDrill) > 28
-      || !isSixtySecondDrill(nextDrill)
-    ) {
-      return null;
-    }
-  }
-
   return {
     clarity: record.clarity as number,
     structure: record.structure as number,
@@ -114,139 +127,134 @@ function parseResultFields(record: Record<string, unknown>, speakerVibe: unknown
     strength: (record.strength as string).trim(),
     improvement: (record.improvement as string).trim(),
     nextDrill: (record.nextDrill as string).trim(),
-    ...(isSpeakerVibe(speakerVibe) ? { speakerVibe } : {}),
-  } satisfies QuickReadResult;
+  };
 }
 
 export function parseQuickReadResult(value: unknown): QuickReadResult | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return null;
-  }
-
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
-  return parseResultFields(record, record.speakerVibe, false);
+  const scoresValue = record.rubricScores ?? record.rubric_scores;
+  if (scoresValue !== undefined && scoresValue !== null) {
+    const allowedKeys = new Set(['clarity', 'structure', 'specificity', 'concision', 'strength', 'improvement', 'nextDrill', 'rubricScores', 'rubric_scores', 'rubricEvidence', 'rubric_evidence', 'rubricVersion', 'rubric_version', 'taskProfileVersion', 'task_profile_version', 'evaluatorPromptVersion', 'evaluator_prompt_version', 'taskMet', 'task_met']);
+    if (Object.keys(record).some((key) => !allowedKeys.has(key))) return null;
+    if (!scoresValue || typeof scoresValue !== 'object' || Array.isArray(scoresValue)) return null;
+    const scores = scoresValue as Record<string, unknown>;
+    if (RUBRIC_CRITERION_IDS.some((id) => !Number.isInteger(scores[id]) || (scores[id] as number) < 0 || (scores[id] as number) > 2)) return null;
+    const rubricScores = Object.fromEntries(RUBRIC_CRITERION_IDS.map((id) => [id, scores[id]])) as RubricScoreMap;
+    const rawEvidence = record.rubricEvidence ?? record.rubric_evidence;
+    const rubricEvidence = rawEvidence === undefined || rawEvidence === null ? undefined : parseQuickReadRubricEvidence(rawEvidence);
+    if (rawEvidence !== undefined && rawEvidence !== null && !rubricEvidence) return null;
+    const dimensionScores = calculateRubricDimensionScores(rubricScores);
+    const expectedVersion = record.rubricVersion ?? record.rubric_version;
+    const taskProfileVersion = record.taskProfileVersion ?? record.task_profile_version;
+    const evaluatorPromptVersion = record.evaluatorPromptVersion ?? record.evaluator_prompt_version;
+    if (expectedVersion !== DROPMIC_RUBRIC_VERSION || taskProfileVersion !== DROPMIC_TASK_PROFILE_VERSION || evaluatorPromptVersion !== DROPMIC_EVALUATOR_PROMPT_VERSION) return null;
+    for (const key of ['strength', 'improvement', 'nextDrill'] as const) {
+      if (typeof record[key] !== 'string' || !isShortCoaching(record[key] as string)) return null;
+    }
+    if (record.taskMet !== undefined && typeof record.taskMet !== 'boolean' && typeof record.task_met !== 'boolean') return null;
+    const taskMet = (record.taskMet ?? record.task_met ?? (rubricScores.task_alignment > 0)) as boolean;
+    const storedDimensions = { clarity: record.clarity, structure: record.structure, specificity: record.specificity, concision: record.concision };
+    for (const key of ['clarity', 'structure', 'specificity', 'concision'] as const) {
+      if (storedDimensions[key] !== undefined && (!isDimensionScore(storedDimensions[key]) || storedDimensions[key] !== dimensionScores[key])) return null;
+    }
+    return {
+      ...dimensionScores,
+      strength: (record.strength as string).trim(),
+      improvement: (record.improvement as string).trim(),
+      nextDrill: (record.nextDrill as string).trim(),
+      rubricVersion: DROPMIC_RUBRIC_VERSION,
+      taskProfileVersion: DROPMIC_TASK_PROFILE_VERSION,
+      evaluatorPromptVersion: DROPMIC_EVALUATOR_PROMPT_VERSION,
+      rubricScores,
+      ...(rubricEvidence ? { rubricEvidence } : {}),
+      taskMet,
+    };
+  }
+  return parseLegacyResult(record);
 }
 
-function parseProviderQuickReadResult(value: unknown): QuickReadResult | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return null;
-  }
-
-  const record = value as Record<string, unknown>;
-  return parseResultFields(record, record.speaker_vibe, true);
-}
-
-type FeedbackDiagnosticField = 'response' | 'output' | 'clarity' | 'structure' | 'specificity' | 'concision' | 'strength' | 'improvement' | 'nextDrill' | 'speaker_vibe';
-type FeedbackDiagnosticReason = 'invalid_shape' | 'invalid_json' | 'missing_field' | 'unexpected_field' | 'invalid_type' | 'out_of_range' | 'invalid_enum' | 'invalid_text' | 'word_limit' | 'duration_required';
+type FeedbackDiagnosticField = 'response' | 'output' | RubricCriterionId;
+type FeedbackDiagnosticReason = 'invalid_shape' | 'invalid_json' | 'missing_field' | 'unexpected_field' | 'invalid_type' | 'out_of_range' | 'invalid_enum' | 'invalid_evidence' | 'invalid_text' | 'unscorable';
 
 export type FeedbackResponseParseResult =
-  | { ok: true; result: QuickReadResult }
-  | {
-      ok: false;
-      code: 'invalid_model_response_shape' | 'invalid_model_json' | 'invalid_model_schema';
-      diagnostics: { field: FeedbackDiagnosticField; reason: FeedbackDiagnosticReason };
-    };
+  | { ok: true; result: QuickReadResult; evidence: QuickReadRubricEvidence }
+  | { ok: false; code: 'invalid_model_response_shape' | 'invalid_model_json' | 'invalid_model_schema' | 'unscorable_evaluation'; diagnostics: { field: FeedbackDiagnosticField; reason: FeedbackDiagnosticReason } };
 
 type ChatCompletionPayload = {
-  choices?: Array<{
-    finish_reason?: unknown;
-    message?: { content?: unknown; refusal?: unknown };
-  }>;
+  choices?: Array<{ message?: { content?: unknown; refusal?: unknown } }>;
 };
 
-function schemaDiagnostic(value: unknown): { field: FeedbackDiagnosticField; reason: FeedbackDiagnosticReason } | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return { field: 'output', reason: 'invalid_shape' };
+function schemaDiagnostic(value: unknown, transcript: string): { field: FeedbackDiagnosticField; reason: FeedbackDiagnosticReason } | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { field: 'output', reason: 'invalid_shape' };
+  const output = value as Record<string, unknown>;
+  if (Object.keys(output).some((key) => key !== 'criteria')) return { field: 'output', reason: 'unexpected_field' };
+  if (!output.criteria || typeof output.criteria !== 'object' || Array.isArray(output.criteria)) return { field: 'output', reason: 'invalid_shape' };
+  const criteria = output.criteria as Record<string, unknown>;
+  const expectedIds = new Set<string>(RUBRIC_CRITERION_IDS);
+  if (Object.keys(criteria).some((id) => !expectedIds.has(id))) return { field: 'output', reason: 'unexpected_field' };
+  for (const id of RUBRIC_CRITERION_IDS) {
+    const candidate = criteria[id];
+    if (candidate === undefined) return { field: id, reason: 'missing_field' };
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return { field: id, reason: 'invalid_shape' };
+    const judgment = candidate as Record<string, unknown>;
+    if (Object.keys(judgment).some((key) => !['score', 'evidence', 'rationale', 'reasonCode'].includes(key))) return { field: id, reason: 'unexpected_field' };
+    if (!Number.isInteger(judgment.score) || ![-1, 0, 1, 2].includes(judgment.score as number)) return { field: id, reason: 'invalid_type' };
+    if (judgment.score === -1) return { field: id, reason: 'unscorable' };
+    if (typeof judgment.evidence !== 'string' || !judgment.evidence.trim() || judgment.evidence.length > 180 || !transcript.includes(judgment.evidence)) return { field: id, reason: 'invalid_evidence' };
+    if (typeof judgment.rationale !== 'string' || !judgment.rationale.trim() || judgment.rationale.length > 240 || wordCount(judgment.rationale) > 28) return { field: id, reason: 'invalid_text' };
+    if (!(RUBRIC_ANCHORS[id].reasons as readonly string[]).includes(String(judgment.reasonCode))) return { field: id, reason: 'invalid_enum' };
+    if ((judgment.score === 2) !== (judgment.reasonCode === 'none')) return { field: id, reason: 'invalid_enum' };
   }
-
-  const record = value as Record<string, unknown>;
-  const requiredFields = ['clarity', 'structure', 'specificity', 'concision', 'strength', 'improvement', 'nextDrill', 'speaker_vibe'] as const;
-  const allowedFields = new Set<string>(requiredFields);
-
-  if (Object.keys(record).some((key) => !allowedFields.has(key))) {
-    return { field: 'output', reason: 'unexpected_field' };
-  }
-
-  for (const field of requiredFields) {
-    if (!Object.prototype.hasOwnProperty.call(record, field)) {
-      return { field, reason: 'missing_field' };
-    }
-  }
-
-  for (const field of ['clarity', 'structure', 'specificity', 'concision'] as const) {
-    const score = record[field];
-    if (typeof score !== 'number' || !Number.isFinite(score)) {
-      return { field, reason: 'invalid_type' };
-    }
-    if (score < 0 || score > 1) {
-      return { field, reason: 'out_of_range' };
-    }
-  }
-
-  if (!isSpeakerVibe(record.speaker_vibe)) {
-    return { field: 'speaker_vibe', reason: 'invalid_enum' };
-  }
-
-  for (const field of ['strength', 'improvement', 'nextDrill'] as const) {
-    const text = record[field];
-    if (typeof text !== 'string' || text.trim().length === 0 || text.length > 1200) {
-      return { field, reason: 'invalid_text' };
-    }
-  }
-
-  if (wordCount((record.strength as string).trim()) > 24) {
-    return { field: 'strength', reason: 'word_limit' };
-  }
-  if (wordCount((record.improvement as string).trim()) > 24) {
-    return { field: 'improvement', reason: 'word_limit' };
-  }
-  if (wordCount((record.nextDrill as string).trim()) > 28) {
-    return { field: 'nextDrill', reason: 'word_limit' };
-  }
-  if (!isSixtySecondDrill((record.nextDrill as string).trim())) {
-    return { field: 'nextDrill', reason: 'duration_required' };
-  }
-
   return null;
 }
 
-export function parseFeedbackResponse(payload: unknown): FeedbackResponseParseResult {
+export function parseFeedbackResponse(payload: unknown, transcript: string): FeedbackResponseParseResult {
   const response = payload as ChatCompletionPayload | null;
-  const choice = response?.choices?.[0];
-  const message = choice?.message;
-
+  const message = response?.choices?.[0]?.message;
   if (!message || typeof message.refusal === 'string' || typeof message.content !== 'string') {
-    return {
-      ok: false,
-      code: 'invalid_model_response_shape',
-      diagnostics: { field: 'response', reason: 'invalid_shape' },
-    };
+    return { ok: false, code: 'invalid_model_response_shape', diagnostics: { field: 'response', reason: 'invalid_shape' } };
   }
-
   let parsed: unknown;
   try {
     parsed = JSON.parse(message.content);
   } catch {
-    return {
-      ok: false,
-      code: 'invalid_model_json',
-      diagnostics: { field: 'response', reason: 'invalid_json' },
-    };
+    return { ok: false, code: 'invalid_model_json', diagnostics: { field: 'response', reason: 'invalid_json' } };
   }
-
-  const diagnostic = schemaDiagnostic(parsed);
+  const diagnostic = schemaDiagnostic(parsed, transcript);
   if (diagnostic) {
-    return { ok: false, code: 'invalid_model_schema', diagnostics: diagnostic };
-  }
-
-  const result = parseProviderQuickReadResult(parsed);
-  if (!result) {
     return {
       ok: false,
-      code: 'invalid_model_schema',
-      diagnostics: { field: 'output', reason: 'invalid_shape' },
+      code: diagnostic.reason === 'unscorable' ? 'unscorable_evaluation' : 'invalid_model_schema',
+      diagnostics: diagnostic,
     };
   }
-
-  return { ok: true, result };
+  const raw = parsed as { criteria: Record<RubricCriterionId, { score: 0 | 1 | 2; evidence: string; rationale: string; reasonCode: string }> };
+  const assessment = raw.criteria as RubricAssessment;
+  const summary = summarizeRubric(assessment);
+  if (summary.totalPoints === 0) {
+    return { ok: false, code: 'unscorable_evaluation', diagnostics: { field: 'output', reason: 'unscorable' } };
+  }
+  return {
+    ok: true,
+    result: {
+      clarity: summary.dimensionScores.clarity,
+      structure: summary.dimensionScores.structure,
+      specificity: summary.dimensionScores.specificity,
+      concision: summary.dimensionScores.concision,
+      strength: summary.strength,
+      improvement: summary.improvement,
+      nextDrill: summary.nextDrill,
+      rubricVersion: summary.rubricVersion,
+      taskProfileVersion: DROPMIC_TASK_PROFILE_VERSION,
+      evaluatorPromptVersion: DROPMIC_EVALUATOR_PROMPT_VERSION,
+      rubricScores: summary.rubricScores,
+      taskMet: summary.taskMet,
+    },
+    evidence: Object.fromEntries(RUBRIC_CRITERION_IDS.map((id) => [id, {
+      excerpt: raw.criteria[id].evidence,
+      rationale: raw.criteria[id].rationale,
+      reasonCode: raw.criteria[id].reasonCode,
+    }])) as QuickReadRubricEvidence,
+  };
 }

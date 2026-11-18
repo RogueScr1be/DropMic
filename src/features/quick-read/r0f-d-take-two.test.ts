@@ -1,9 +1,11 @@
 import React from 'react';
-import { Animated } from 'react-native';
+import { Animated, Text } from 'react-native';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 import { createTakeTwoTake } from './take-two-journey';
+import { RUBRIC_CRITERION_IDS } from '../../../supabase/functions/_shared/dropmic-rubric';
+import type { QuickReadResult } from '../../../supabase/functions/_shared/quick-read-contract';
 
 /* eslint-disable import/first */
 
@@ -36,7 +38,23 @@ const result = {
   strength: 'Clear opening.',
   improvement: 'Add one example.',
   nextDrill: 'Answer with one example and a closing sentence.',
-  speakerVibe: 'The Storyteller' as const,
+};
+
+const rubricResult: QuickReadResult = {
+  ...result,
+  clarity: 1,
+  structure: 1,
+  specificity: 0.875,
+  concision: 1,
+  rubricVersion: 'dropmic-message-v1',
+  taskProfileVersion: 'dropmic-task-profile-v1',
+  evaluatorPromptVersion: 'dropmic-quick-read-prompt-v1',
+  rubricScores: Object.fromEntries(RUBRIC_CRITERION_IDS.map((id) => [id, id === 'support' ? 1 : 2])) as NonNullable<QuickReadResult['rubricScores']>,
+  rubricEvidence: Object.fromEntries(RUBRIC_CRITERION_IDS.map((id) => [id, {
+    excerpt: 'School should start later because tired students cannot focus.',
+    rationale: 'You connect the recommendation to a reason the listener can follow.',
+    reasonCode: id === 'support' ? 'support_incomplete' : 'none',
+  }])) as NonNullable<QuickReadResult['rubricEvidence']>,
 };
 
 const comparison = {
@@ -155,19 +173,29 @@ describe('R0F-D local Take Two journey', () => {
     await act(async () => { await Promise.resolve(); });
   });
 
-  it('renders the four requested metrics and locks the paid-only tiles for free access', async () => {
+  it('shows the same four dimension scores to Free and Plus users', async () => {
     mockedEligibility.mockResolvedValue(false);
     const renderer = renderFlow();
     await press(renderer, 'Upload & get my Quick Read');
 
     expect(renderer.root.findByProps({ accessibilityLabel: 'Drop Score: 75 percent' })).toBeTruthy();
     expect(renderer.root.findByProps({ accessibilityLabel: 'Clarity: 80 percent' })).toBeTruthy();
-    expect(renderer.root.findByProps({ accessibilityLabel: 'Structure: locked for free access' })).toBeTruthy();
-    expect(renderer.root.findByProps({ accessibilityLabel: 'Directness: locked for free access' })).toBeTruthy();
-    expect(renderer.root.findAllByProps({ accessibilityLabel: 'Specificity: 60 percent' })).toHaveLength(0);
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Structure: 70 percent' })).toBeTruthy();
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Specificity: 60 percent' })).toBeTruthy();
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Concision: 90 percent' })).toBeTruthy();
     const visibleUnits = renderer.root.findAllByProps({ children: '%' });
     expect(visibleUnits.length).toBeGreaterThan(0);
     expect(visibleUnits.every((unit) => !('marginTop' in (unit.props.style ?? {})))).toBe(true);
+    expect(renderer.root.findAll((node) => typeof node.props.children === 'string' && node.props.children.includes('SPEAKER VIBE'))).toHaveLength(0);
+  });
+
+  it('withholds only the overall score when task alignment is zero', async () => {
+    mockedStart.mockResolvedValueOnce({ runId: 'run-off-task', result: { ...result, taskMet: false } });
+    const renderer = renderFlow();
+    await press(renderer, 'Upload & get my Quick Read');
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Drop Score: unavailable because the task was not met' })).toBeTruthy();
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Clarity: 80 percent' })).toBeTruthy();
+    expect(renderer.root.findAll((node) => node.props.children === 'Task not met. Your dimension feedback is shown without an overall score.').length).toBeGreaterThan(0);
   });
 
   it('animates visible score counters and bars when Reduced Motion is off', async () => {
@@ -178,10 +206,11 @@ describe('R0F-D local Take Two journey', () => {
 
     await press(renderer, 'Upload & get my Quick Read');
 
-    expect(timing).toHaveBeenCalledTimes(2);
-    expect(timing).toHaveBeenCalledWith(expect.any(Animated.Value), { duration: 720, toValue: 1, useNativeDriver: false });
+    expect(timing).toHaveBeenCalledTimes(5);
+    expect(timing.mock.calls.map((call) => call[1].toValue)).toEqual([75, 80, 70, 60, 90]);
+    expect(timing).toHaveBeenCalledWith(expect.any(Animated.Value), { duration: 720, toValue: 75, useNativeDriver: false });
     act(() => renderer.unmount());
-    expect(animation.stop).toHaveBeenCalledTimes(2);
+    expect(animation.stop).toHaveBeenCalledTimes(5);
     timing.mockRestore();
   });
 
@@ -192,18 +221,127 @@ describe('R0F-D local Take Two journey', () => {
     await act(async () => { await Promise.resolve(); });
 
     expect(renderer.root.findByProps({ accessibilityLabel: 'Structure: 70 percent' })).toBeTruthy();
-    expect(renderer.root.findByProps({ accessibilityLabel: 'Directness: 90 percent' })).toBeTruthy();
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Concision: 90 percent' })).toBeTruthy();
   });
 
-  it('does not fabricate a vibe for a legacy result', async () => {
-    const { speakerVibe: ignoredSpeakerVibe, ...legacyResult } = result;
-    void ignoredSpeakerVibe;
+  it('shows Plus-only evidence detail while keeping the same base scores and coaching loop', async () => {
+    mockedEligibility.mockResolvedValue(true);
+    mockedStart.mockResolvedValueOnce({ runId: 'run-plus', result: rubricResult });
+    const renderer = renderFlow();
+    await press(renderer, 'Upload & get my Quick Read');
+    await act(async () => { await Promise.resolve(); });
+
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Drop Score: 97 percent' })).toBeTruthy();
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Clarity: 100 percent' })).toBeTruthy();
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Plus score details with transcript evidence' })).toBeTruthy();
+    expect(renderer.root.findByProps({ testID: 'rubric-evidence-support' })).toBeTruthy();
+    const labels = renderer.root.findAllByType(Text).map((node) => node.props.children);
+    expect(labels).toContain('WHERE YOU SHINE');
+    expect(labels).toContain('WHERE YOU NEED WORK');
+    expect(labels).toContain('DROP DRILL');
+  });
+
+  it('does not expose rubric excerpts to Free users', async () => {
+    mockedEligibility.mockResolvedValue(false);
+    mockedStart.mockResolvedValueOnce({ runId: 'run-free', result: rubricResult });
+    const renderer = renderFlow();
+    await press(renderer, 'Upload & get my Quick Read');
+    await act(async () => { await Promise.resolve(); });
+    expect(renderer.root.findAllByProps({ testID: 'plus-rubric-evidence' })).toHaveLength(0);
+  });
+
+  it('preserves the original Take Two baseline when the second Quick Read fails', async () => {
+    const onClose = jest.fn();
+    mockedStart.mockRejectedValueOnce(Object.assign(
+      new Error('Quick Read could not validate the feedback. Your recording was kept for retry.'),
+      { retryAvailable: true, code: 'invalid_model_schema' },
+    ));
+    const renderer = renderFlow({ onClose, takeTwoBaselineRunId: 'run-first' });
+    await press(renderer, 'Upload & get my Quick Read');
+
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Second Quick Read paused safely.' })).toBeTruthy();
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Retry second Quick Read' })).toBeTruthy();
+    await press(renderer, 'Keep both Drops');
+    expect(onClose).toHaveBeenCalledWith({ preserveTakeTwoBaseline: true });
+  });
+
+  it('uses the one explicit retry to finish the second read before comparing', async () => {
+    mockedStart.mockRejectedValueOnce(Object.assign(new Error('Quick Read could not validate the feedback.'), {
+      code: 'invalid_model_schema',
+      retryAvailable: true,
+    }));
+    const renderer = renderFlow({ takeTwoBaselineRunId: 'run-first' });
+    await press(renderer, 'Upload & get my Quick Read');
+    await press(renderer, 'Retry second Quick Read');
+
+    expect(mockedStart).toHaveBeenCalledTimes(2);
+    expect(mockedStart.mock.calls[1]?.[0]).toMatchObject({ retryFailed: true, idempotencyKey: 'key-a' });
+    expect(mockedCompare).toHaveBeenCalledWith({ baselineRunId: 'run-first', followUpRunId: 'run-b' });
+    expect(renderer.root.findByProps({ testID: 'take-two-comparison' })).toBeTruthy();
+  });
+
+  it('checks the same run after a lost retry response without creating another provider attempt', async () => {
+    mockedStart
+      .mockRejectedValueOnce(Object.assign(new Error('Schema failed.'), { code: 'invalid_model_schema', retryAvailable: true }))
+      .mockRejectedValueOnce(Object.assign(new Error('Response unknown.'), { code: 'retry_status_unknown', retryStatusUnknown: true }))
+      .mockResolvedValueOnce({ runId: 'run-b', result });
+    const renderer = renderFlow({ takeTwoBaselineRunId: 'run-first' });
+
+    await press(renderer, 'Upload & get my Quick Read');
+    await press(renderer, 'Retry second Quick Read');
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Check Quick Read status' })).toBeTruthy();
+    expect(renderer.root.findAllByProps({ accessibilityLabel: 'Retry second Quick Read' })).toHaveLength(0);
+    await press(renderer, 'Check Quick Read status');
+
+    expect(mockedStart).toHaveBeenCalledTimes(3);
+    expect(mockedStart.mock.calls[1]?.[0]).toMatchObject({ retryFailed: true, idempotencyKey: 'key-a' });
+    expect(mockedStart.mock.calls[2]?.[0]).toMatchObject({ retryFailed: true, idempotencyKey: 'key-a' });
+    expect(mockedCompare).toHaveBeenCalledWith({ baselineRunId: 'run-first', followUpRunId: 'run-b' });
+  });
+
+  it('coalesces duplicate retry taps into one same-run request', async () => {
+    mockedStart
+      .mockRejectedValueOnce(Object.assign(new Error('Schema failed.'), { code: 'invalid_model_schema', retryAvailable: true }))
+      .mockResolvedValueOnce({ runId: 'run-b', result });
+    const renderer = renderFlow({ takeTwoBaselineRunId: 'run-first' });
+    await press(renderer, 'Upload & get my Quick Read');
+
+    await act(async () => {
+      const retry = renderer.root.findByProps({ accessibilityLabel: 'Retry second Quick Read' });
+      retry.props.onPress();
+      retry.props.onPress();
+      await Promise.resolve();
+    });
+
+    expect(mockedStart).toHaveBeenCalledTimes(2);
+    expect(mockedStart.mock.calls[1]?.[0]).toMatchObject({ retryFailed: true, idempotencyKey: 'key-a' });
+  });
+
+  it('does not offer another retry after the server reports the single retry is unavailable', async () => {
+    mockedStart.mockRejectedValueOnce(Object.assign(new Error('Retry is unavailable.'), { code: 'retry_not_available' }));
+    const renderer = renderFlow({ takeTwoBaselineRunId: 'run-first' });
+    await press(renderer, 'Upload & get my Quick Read');
+
+    expect(renderer.root.findAllByProps({ accessibilityLabel: 'Retry second Quick Read' })).toHaveLength(0);
+    expect(renderer.root.findByProps({ accessibilityLabel: 'Keep both Drops' })).toBeTruthy();
+  });
+
+  it('does not offer retry unless the server explicitly marks the same run eligible', async () => {
+    mockedStart.mockRejectedValueOnce(Object.assign(new Error('Quick Read failed.'), { code: 'invalid_model_schema' }));
+    const renderer = renderFlow({ takeTwoBaselineRunId: 'run-first' });
+    await press(renderer, 'Upload & get my Quick Read');
+
+    expect(renderer.root.findAllByProps({ accessibilityLabel: 'Retry second Quick Read' })).toHaveLength(0);
+    expect(renderer.root.findByProps({ children: 'Contact support' })).toBeTruthy();
+  });
+
+  it('shows no style card for a legacy Quick Read result', async () => {
+    const legacyResult = { ...result };
     mockedStart.mockResolvedValueOnce({ runId: 'run-legacy', result: legacyResult });
     const renderer = renderFlow();
     await press(renderer, 'Upload & get my Quick Read');
 
-    expect(renderer.root.findByProps({ accessibilityLabel: 'Speaker Vibe: not available for this saved result' })).toBeTruthy();
-    expect(renderer.root.findByProps({ children: 'Not available for this saved result.' })).toBeTruthy();
+    expect(renderer.root.findAll((node) => typeof node.props.accessibilityLabel === 'string' && node.props.accessibilityLabel.includes('Vibe'))).toHaveLength(0);
   });
 
   it('fires Take Two once on duplicate taps and preserves the baseline run ID', async () => {

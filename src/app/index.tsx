@@ -74,7 +74,9 @@ import {
   createConsumedTakeIdentity,
   createPendingTakeIdentity,
   createTakeIdentity,
+  getServerAttemptIdForTake,
   prepareIdentityForRecording,
+  type ServerAttemptBinding,
   type TakeIdentity,
   type TakeIdentityLifecycle,
 } from '@/features/quick-read/attempt-identity';
@@ -142,7 +144,7 @@ export default function AudioProofScreen() {
   const [countdownNowMs, setCountdownNowMs] = useState(0);
   const [actionError, setActionError] = useState<string | null>(null);
   const [recoveryAttempt, setRecoveryAttempt] = useState<UnclaimedAttempt | null>(null);
-  const [serverAttemptId, setServerAttemptId] = useState<string | null>(null);
+  const [serverAttemptBinding, setServerAttemptBinding] = useState<ServerAttemptBinding | null>(null);
   const [isAuthFlowVisible, setIsAuthFlowVisible] = useState(auth === 'complete');
   const [authFlowMode, setAuthFlowMode] = useState<'conversion' | 'sign-in'>('conversion');
   const [isQuickReadVisible, setIsQuickReadVisible] = useState(false);
@@ -159,6 +161,7 @@ export default function AudioProofScreen() {
   const [authenticatedUserId, setAuthenticatedUserId] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
   const [takeIdentity, setTakeIdentity] = useState<TakeIdentity>(() => createTakeIdentity());
+  const serverAttemptId = getServerAttemptIdForTake(serverAttemptBinding, takeIdentity.clientAttemptId);
   const [takeTwoBaselineRunId, setTakeTwoBaselineRunId] = useState<string | null>(null);
   const [micFlowStatus, setMicFlowStatus] = useState<'idle' | 'pending' | 'protected' | 'unprotected' | 'save_decision_required'>('idle');
   const [micFlowSnapshot, setMicFlowSnapshot] = useState<MicFlowSnapshot | null>(null);
@@ -312,15 +315,20 @@ export default function AudioProofScreen() {
 
     void (async () => {
       try {
-        const attemptId = serverAttemptId ?? await getOwnedAttemptId(retainedCompletedTake.clientAttemptId);
-        if (!attemptId) {
-          if (!cancelled && requestId === challengeLinkHydrationRef.current) {
-            setChallengeLinkReadyForClientAttempt(retainedCompletedTake.clientAttemptId);
-          }
+        if (retainedCompletedTake.clientAttemptId !== takeIdentity.clientAttemptId) {
           return;
         }
-        if (!serverAttemptId) {
-          setServerAttemptId(attemptId);
+        const attemptId = getServerAttemptIdForTake(serverAttemptBinding, retainedCompletedTake.clientAttemptId)
+          ?? await getOwnedAttemptId(retainedCompletedTake.clientAttemptId);
+        if (cancelled || requestId !== challengeLinkHydrationRef.current || retainedCompletedTake.clientAttemptId !== takeIdentity.clientAttemptId) {
+          return;
+        }
+        if (!attemptId) {
+          setChallengeLinkReadyForClientAttempt(retainedCompletedTake.clientAttemptId);
+          return;
+        }
+        if (!getServerAttemptIdForTake(serverAttemptBinding, retainedCompletedTake.clientAttemptId)) {
+          setServerAttemptBinding({ clientAttemptId: retainedCompletedTake.clientAttemptId, serverAttemptId: attemptId });
         }
         const storedLink = await getChallengeShareLink(authenticatedUserId, attemptId);
         const activeChallenge = storedLink ? null : await findActiveChallengeForAttempt(attemptId);
@@ -339,7 +347,7 @@ export default function AudioProofScreen() {
     return () => {
       cancelled = true;
     };
-  }, [authenticatedUserId, retainedCompletedTake, serverAttemptId]);
+  }, [authenticatedUserId, retainedCompletedTake, serverAttemptBinding, takeIdentity.clientAttemptId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -635,7 +643,7 @@ export default function AudioProofScreen() {
     takeIdentityLifecycleRef.current = createPendingTakeIdentity(nextTakeIdentity);
     setTakeIdentity(nextTakeIdentity);
     setChallengeAttempt(false);
-    setServerAttemptId(null);
+    setServerAttemptBinding(null);
     setTakeTwoBaselineRunId(comparisonBaselineRunId);
     setIsQuickReadVisible(false);
     setMicFlowStatus('idle');
@@ -776,7 +784,7 @@ export default function AudioProofScreen() {
     };
     takeIdentityLifecycleRef.current = createConsumedTakeIdentity(restoredIdentity);
     setTakeIdentity(restoredIdentity);
-    setServerAttemptId(null);
+    setServerAttemptBinding(null);
     setTakeTwoBaselineRunId(null);
     setIsQuickReadVisible(false);
     setRetainedTakeStartPromptVisible(false);
@@ -1456,6 +1464,10 @@ export default function AudioProofScreen() {
         setIsAuthFlowVisible(true);
         return false;
       }
+      if (!currentAttempt || currentAttempt.clientAttemptId !== requestedTakeId) {
+        setActionError('The completed take identity is still being prepared. Wait a moment, then try Quick Read again.');
+        return false;
+      }
       const attemptId = serverAttemptId ?? (await claimUnclaimedAttempt(currentAttempt));
       if (takeIdentityLifecycleRef.current.identity.clientAttemptId !== requestedTakeId) {
         return false;
@@ -1469,7 +1481,7 @@ export default function AudioProofScreen() {
       }
       setIsAuthFlowVisible(false);
       setIsSettingsVisible(false);
-      setServerAttemptId(attemptId);
+      setServerAttemptBinding({ clientAttemptId: requestedTakeId, serverAttemptId: attemptId });
       setQuickReadAutoStart(true);
       setIsQuickReadVisible(true);
       return true;
@@ -1491,14 +1503,17 @@ export default function AudioProofScreen() {
       return;
     }
     const requestTakeId = retainedCompletedTake.clientAttemptId;
-    const attemptId = serverAttemptId ?? await claimUnclaimedAttempt(currentAttempt);
+    const attemptId = getServerAttemptIdForTake(serverAttemptBinding, requestTakeId)
+      ?? await getOwnedAttemptId(requestTakeId) ?? (
+      currentAttempt?.clientAttemptId === requestTakeId ? await claimUnclaimedAttempt(currentAttempt) : null
+    );
     if (takeIdentityLifecycleRef.current.identity.clientAttemptId !== requestTakeId) {
       return;
     }
     if (typeof attemptId !== 'string') {
       throw new Error('The saved Drop is not ready for challenge sharing.');
     }
-    setServerAttemptId(attemptId);
+    setServerAttemptBinding({ clientAttemptId: requestTakeId, serverAttemptId: attemptId });
     const challenge = await createPersistAndShareChallenge({
       attemptId,
       category: retainedChallengeMetadata.category,
@@ -1522,7 +1537,7 @@ export default function AudioProofScreen() {
       durationSeconds: retainedChallengeMetadata.durationSeconds,
       expiresAt: challenge.expiresAt,
     });
-  }, [activeChallengeShareLink, authenticatedUserId, challengeShareEligible, currentAttempt, retainedChallengeMetadata, retainedCompletedTake, serverAttemptId]);
+  }, [activeChallengeShareLink, authenticatedUserId, challengeShareEligible, currentAttempt, retainedChallengeMetadata, retainedCompletedTake, serverAttemptBinding]);
 
   const shareExistingChallenge = useCallback(async () => {
     if (!activeChallengeShareLink || !retainedChallengeMetadata) {
@@ -1537,10 +1552,12 @@ export default function AudioProofScreen() {
     }
     setChallengeLinkActionInFlight(true);
     try {
-      const attemptId = serverAttemptId ?? await getOwnedAttemptId(retainedCompletedTake.clientAttemptId);
+      const attemptId = getServerAttemptIdForTake(serverAttemptBinding, retainedCompletedTake.clientAttemptId)
+        ?? await getOwnedAttemptId(retainedCompletedTake.clientAttemptId);
       if (!attemptId) {
         throw new Error('The saved Drop is not ready for challenge-link recovery.');
       }
+      setServerAttemptBinding({ clientAttemptId: retainedCompletedTake.clientAttemptId, serverAttemptId: attemptId });
       const challenge = await rotateChallengeLink(attemptId);
       const persistedLink: ChallengeShareLinkRecord = {
         version: 1,
@@ -1564,7 +1581,7 @@ export default function AudioProofScreen() {
     } finally {
       setChallengeLinkActionInFlight(false);
     }
-  }, [authenticatedUserId, challengeLinkActionInFlight, retainedChallengeMetadata, retainedCompletedTake, serverAttemptId]);
+  }, [authenticatedUserId, challengeLinkActionInFlight, retainedChallengeMetadata, retainedCompletedTake, serverAttemptBinding]);
 
   const handleDeveloperLogin = useCallback(() => {
     setRequiresNewDropAfterDevLogin(true);
@@ -1812,7 +1829,7 @@ export default function AudioProofScreen() {
       <SignupFlow
         attempt={currentAttempt ?? recoveryAttempt}
         mode={authFlowMode}
-        onAttemptClaimed={setServerAttemptId}
+        onAttemptClaimed={(attemptId) => setServerAttemptBinding({ clientAttemptId: takeIdentity.clientAttemptId, serverAttemptId: attemptId })}
         onDeveloperLogin={handleDeveloperLogin}
         onClose={() => {
           setIsAuthFlowVisible(false);
@@ -1851,10 +1868,10 @@ export default function AudioProofScreen() {
         audioExtension={quickReadAudioExtension(recordingUri)}
         audioUri={recordingUri}
         idempotencyKey={takeIdentity.quickReadIdempotencyKey}
-        onClose={() => {
+        onClose={(options) => {
           setIsQuickReadVisible(false);
           setQuickReadAutoStart(false);
-          if (takeTwoBaselineRunId) {
+          if (takeTwoBaselineRunId && !options?.preserveTakeTwoBaseline) {
             setTakeTwoBaselineRunId(null);
           }
         }}

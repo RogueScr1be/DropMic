@@ -6,6 +6,7 @@ import { trackEvent } from '@/features/analytics/analytics';
 import { getPlusDisplayEligibility, syncRevenueCatEntitlement } from './plus-display';
 
 import { revenueCatAdapter } from './revenuecat-adapter';
+import { colors, radii, spacing, typography } from '@/ui/theme';
 
 type PackageOption = { identifier: string | null; productId: string | null; title: string; price: string; description: string };
 
@@ -103,7 +104,7 @@ export function PlusPaywall({ onAccessUpdated, onClose, visible }: { onAccessUpd
     <View style={styles.backdrop}><ScrollView contentContainerStyle={styles.content} style={styles.sheet}>
       <View style={styles.header}><Text style={styles.kicker}>DROPMIC PLUS</Text><Pressable accessibilityLabel="Close Plus" onPress={onClose}><Text style={styles.close}>Close</Text></Pressable></View>
       <Text accessibilityRole="header" style={styles.title}>Find Your Voice.</Text>
-      <Text style={styles.body}>Give your thoughts room to come out. Practice for 60 or 90 seconds, get the full Quick Read, and keep the takes you want to revisit.</Text>
+      <Text style={styles.body}>Practice for 60 or 90 seconds, compare two takes, and see the exact moments behind your feedback—with the same core score and coaching you get on Free.</Text>
       {products.map((product) => <Pressable key={product.identifier ?? product.title} accessibilityRole="radio" accessibilityState={{ selected: selected === product.identifier && product.identifier !== null }} onPress={() => product.identifier && setSelected(product.identifier)} style={[styles.product, selected === product.identifier && product.identifier !== null && styles.selected]}>
         <View style={styles.productCopy}><Text style={styles.productTitle}>{product.title}</Text><Text style={styles.productDescription}>{product.description}</Text></View><Text style={styles.price}>{product.price}</Text>
       </Pressable>)}
@@ -118,26 +119,26 @@ export function PlusPaywall({ onAccessUpdated, onClose, visible }: { onAccessUpd
 }
 
 const styles = StyleSheet.create({
-  backdrop: { backgroundColor: 'rgba(24, 51, 45, 0.58)', flex: 1, justifyContent: 'flex-end' },
-  sheet: { backgroundColor: '#fffaf2', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '92%' },
-  content: { gap: 16, padding: 24, paddingBottom: 42 },
+  backdrop: { backgroundColor: colors.overlay, flex: 1, justifyContent: 'flex-end' },
+  sheet: { backgroundColor: colors.surface, borderTopLeftRadius: radii.lg, borderTopRightRadius: radii.lg, maxHeight: '92%' },
+  content: { gap: spacing.lg, padding: spacing.xxl, paddingBottom: spacing.jumbo + spacing.xs },
   header: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
-  kicker: { color: '#e4572e', fontSize: 11, fontWeight: '900', letterSpacing: 2 },
-  close: { color: '#526c63', fontWeight: '700', padding: 8 },
-  title: { color: '#18332d', fontFamily: 'Georgia', fontSize: 32, fontWeight: '700', lineHeight: 38 },
-  body: { color: '#526c63', fontSize: 16, lineHeight: 24 },
-  product: { alignItems: 'center', backgroundColor: '#f4ebdd', borderColor: '#c4b5a2', borderRadius: 14, borderWidth: 1, flexDirection: 'row', gap: 12, justifyContent: 'space-between', padding: 16 },
-  selected: { backgroundColor: '#e7dccb', borderColor: '#18332d', borderWidth: 2 },
-  productTitle: { color: '#18332d', fontSize: 16, fontWeight: '900' },
+  kicker: { color: colors.coral, ...typography.eyebrow },
+  close: { color: colors.muted, fontWeight: '700', padding: spacing.sm },
+  title: { color: colors.ink, fontFamily: typography.displayFamily, ...typography.displayMedium },
+  body: { color: colors.muted, ...typography.body },
+  product: { alignItems: 'center', backgroundColor: colors.surfaceMuted, borderColor: colors.border, borderRadius: radii.md, borderWidth: 1, flexDirection: 'row', gap: spacing.md, justifyContent: 'space-between', padding: spacing.lg },
+  selected: { backgroundColor: colors.surfaceMuted, borderColor: colors.ink, borderWidth: 2 },
+  productTitle: { color: colors.ink, fontSize: 16, fontWeight: '900' },
   productCopy: { flex: 1, minWidth: 0 },
-  productDescription: { color: '#526c63', fontSize: 13, lineHeight: 18, marginTop: 4 },
-  price: { color: '#18332d', flexShrink: 0, fontFamily: 'Georgia', fontSize: 19, fontWeight: '700', textAlign: 'right' },
-  message: { color: '#e4572e', fontSize: 14, lineHeight: 20 },
-  primary: { alignItems: 'center', backgroundColor: '#18332d', borderRadius: 14, minHeight: 58, justifyContent: 'center' },
-  primaryText: { color: '#fffaf2', fontSize: 16, fontWeight: '900' },
-  secondary: { alignItems: 'center', borderColor: '#c4b5a2', borderRadius: 14, borderWidth: 1, minHeight: 52, justifyContent: 'center' },
-  secondaryText: { color: '#18332d', fontSize: 15, fontWeight: '800' },
-  legalLinks: { alignItems: 'center', flexDirection: 'row', gap: 28, justifyContent: 'center', paddingTop: 2 },
-  legalText: { color: '#799087', fontSize: 12, lineHeight: 18, textAlign: 'center' },
-  link: { color: '#e4572e', fontSize: 13, fontWeight: '800' },
+  productDescription: { color: colors.muted, fontSize: 13, lineHeight: 18, marginTop: spacing.xs },
+  price: { color: colors.ink, flexShrink: 0, fontFamily: typography.displayFamily, fontSize: 19, fontWeight: '700', textAlign: 'right' },
+  message: { color: colors.coral, fontSize: 14, lineHeight: 20 },
+  primary: { alignItems: 'center', backgroundColor: colors.ink, borderRadius: radii.md, minHeight: 58, justifyContent: 'center' },
+  primaryText: { color: colors.surface, fontSize: 16, fontWeight: '900' },
+  secondary: { alignItems: 'center', borderColor: colors.border, borderRadius: radii.md, borderWidth: 1, minHeight: 52, justifyContent: 'center' },
+  secondaryText: { color: colors.ink, fontSize: 15, fontWeight: '800' },
+  legalLinks: { alignItems: 'center', flexDirection: 'row', gap: spacing.xxl, justifyContent: 'center', paddingTop: spacing.xs / 2 },
+  legalText: { color: colors.muted, fontSize: 12, lineHeight: 18, textAlign: 'center' },
+  link: { color: colors.coral, fontSize: 13, fontWeight: '800' },
 });

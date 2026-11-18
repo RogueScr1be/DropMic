@@ -1,5 +1,5 @@
 begin;
-select plan(35);
+select plan(36);
 
 select has_table('public', 'challenge_links', 'challenge_links exists');
 select col_is_unique('public', 'challenge_links', 'token_hash', 'challenge token hash is unique');
@@ -37,7 +37,7 @@ select ok(not has_table_privilege('authenticated', 'public.analytics_events', 'S
 select ok(not has_table_privilege('authenticated', 'public.analytics_events', 'UPDATE'), 'authenticated clients cannot mutate analytics');
 select ok(has_table_privilege('service_role', 'public.analytics_events', 'SELECT'), 'service role owns analytics access');
 select ok(exists (select 1 from pg_policies where tablename = 'analytics_events' and policyname = 'analytics_events_insert_safe'), 'analytics insert policy validates envelope');
-select ok((select qual from pg_policies where tablename = 'analytics_events' and policyname = 'analytics_events_insert_safe') like '%owner_id is null%', 'analytics rejects caller-supplied owner identities');
+select ok((select with_check from pg_policies where tablename = 'analytics_events' and policyname = 'analytics_events_insert_safe') ilike '%owner_id is null%', 'analytics rejects caller-supplied owner identities');
 select ok(exists (select 1 from pg_policies where tablename = 'challenge_links' and policyname = 'challenge_links_owner_delete'), 'owners can delete challenges');
 select ok(exists (select 1 from pg_constraint where conrelid = 'public.challenge_links'::regclass and pg_get_constraintdef(oid) like '%duration_seconds%30%60%90%'), 'challenge duration is constrained');
 
@@ -58,13 +58,17 @@ values (
   '33333333-3333-4333-8333-333333333333',
   '11111111-1111-4111-8111-111111111111',
   'launch-owner-attempt', 'launch', 30, 30, now()
+), (
+  '44444444-4444-4444-8444-444444444444',
+  '22222222-2222-4222-8222-222222222222',
+  'launch-other-attempt', 'launch', 60, 60, now()
 );
 insert into public.challenge_links (
   owner_id, source_attempt_id, token_hash, prompt, duration_seconds, expires_at, status
 )
 values
   ('11111111-1111-4111-8111-111111111111', '33333333-3333-4333-8333-333333333333', repeat('a', 64), 'Owner challenge', 30, now() + interval '1 day', 'active'),
-  ('22222222-2222-4222-8222-222222222222', '33333333-3333-4333-8333-333333333333', repeat('b', 64), 'Other challenge', 60, now() + interval '1 day', 'disabled');
+  ('22222222-2222-4222-8222-222222222222', '44444444-4444-4444-8444-444444444444', repeat('b', 64), 'Other challenge', 60, now() + interval '1 day', 'disabled');
 reset role;
 
 set local role authenticated;

@@ -79,7 +79,12 @@ insert into public.mic_flow_state (
 )
 values (
   '44444444-4444-4444-8444-444444444444', 4, 9, 1, 0,
-  (now() at time zone 'UTC')::date, now() - interval '10 minutes', 'UTC'
+  (now() at time zone 'UTC')::date,
+  greatest(
+    now() - interval '10 minutes',
+    date_trunc('day', now() at time zone 'UTC') at time zone 'UTC'
+  ),
+  'UTC'
 );
 reset role;
 set local role authenticated;

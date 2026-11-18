@@ -5,6 +5,8 @@ import {
   ProviderAdapterError,
 } from '../../../supabase/functions/_shared/provider-adapters';
 
+const context = { mode: 'cold_take' as const, duration: 30 as const, taskPrompt: 'Should schools start later?' };
+
 const audio = new Blob(['test-audio'], { type: 'audio/wav' });
 
 describe('R0D-C deterministic provider adapters', () => {
@@ -16,10 +18,11 @@ describe('R0D-C deterministic provider adapters', () => {
     });
 
     await expect(adapters.transcription.transcribe(audio, 'source.wav')).resolves.toContain('deterministic');
-    await expect(adapters.feedback.analyze('transcript')).resolves.toMatchObject({
-      clarity: 0.8,
-      nextDrill: expect.any(String),
-      speakerVibe: 'The Storyteller',
+    await expect(adapters.feedback.analyze('transcript', context)).resolves.toMatchObject({
+      result: {
+        clarity: 0.8,
+        nextDrill: expect.any(String),
+      },
     });
   });
 
@@ -35,11 +38,11 @@ describe('R0D-C deterministic provider adapters', () => {
       transient: true,
     });
     await expect(adapters.transcription.transcribe(audio, 'source.wav')).resolves.toContain('deterministic');
-    await expect(adapters.feedback.analyze('transcript')).rejects.toMatchObject({
+    await expect(adapters.feedback.analyze('transcript', context)).rejects.toMatchObject({
       safeCode: 'feedback_provider_transient',
       transient: true,
     });
-    await expect(adapters.feedback.analyze('transcript')).resolves.toHaveProperty('specificity', 0.6);
+    await expect(adapters.feedback.analyze('transcript', context)).resolves.toHaveProperty('result.specificity', 0.6);
   });
 
   async function expectTranscriptionFault(

@@ -1,12 +1,9 @@
-type QuickReadResult = {
-  clarity: number;
-  structure: number;
-  specificity: number;
-  concision: number;
-  strength: string;
-  improvement: string;
-  nextDrill: string;
-  speakerVibe: 'The Storyteller' | 'The Straight Shooter' | 'The Debater' | 'The Connector' | 'The Explorer' | 'The Builder' | 'The Analyst' | 'The Spark';
+import type { QuickReadResult, QuickReadRubricEvidence } from './quick-read-contract.ts';
+import type { QuickReadScoringContext } from './quick-read-prompt.ts';
+
+export type QuickReadAnalysis = {
+  result: QuickReadResult;
+  evidence?: QuickReadRubricEvidence;
 };
 
 export type TestFaultMode =
@@ -35,7 +32,7 @@ export type TranscriptionAdapter = {
 
 export type FeedbackAdapter = {
   model: string;
-  analyze: (transcript: string) => Promise<QuickReadResult>;
+  analyze: (transcript: string, context: QuickReadScoringContext) => Promise<QuickReadAnalysis>;
 };
 
 export function createDeterministicTestAdapters(config: {
@@ -73,16 +70,16 @@ export function createDeterministicTestAdapters(config: {
   return {
     transcription: {
       model: 'r0d-c-test-transcription',
-      transcribe: async (_audio: Blob, _path: string) => {
+      transcribe: (_audio: Blob, _path: string) => Promise.resolve().then(() => {
         fault('transcription', config.transcription);
         return 'This is a deterministic lifecycle test transcript.';
-      },
+      }),
     } satisfies TranscriptionAdapter,
     feedback: {
       model: 'r0d-c-test-feedback',
-      analyze: async (_transcript: string) => {
+      analyze: (_transcript: string, _context: QuickReadScoringContext) => Promise.resolve().then(() => {
         fault('feedback', config.feedback);
-        return {
+        return { result: {
           clarity: 0.8,
           structure: 0.7,
           specificity: 0.6,
@@ -90,9 +87,8 @@ export function createDeterministicTestAdapters(config: {
           strength: 'You open with a clear point.',
           improvement: 'You can add one concrete example.',
           nextDrill: 'You can answer again with one example and a closing sentence for exactly 60 seconds.',
-          speakerVibe: 'The Storyteller',
-        } satisfies QuickReadResult;
-      },
+        } satisfies QuickReadResult };
+      }),
     } satisfies FeedbackAdapter,
   };
 }

@@ -11,4 +11,18 @@ describe('Drop Score', () => {
     expect(calculateDropScore({ clarity: 0, structure: 0, specificity: 0, concision: 0.02 })).toBe(1);
     expect(calculateDropScore({ clarity: 1, structure: 1, specificity: 1, concision: 1 })).toBe(100);
   });
+
+  it('calculates from the 16 raw criterion points instead of averaging rounded tiles', () => {
+    const rubricScores = Object.fromEntries([
+      'main_message', 'task_alignment', 'understandable_meaning', 'internal_consistency',
+      'orientation', 'progression', 'connections', 'completion',
+      'concrete_detail', 'support', 'explanation', 'sufficient_development',
+      'relevant_content', 'repetition', 'economy_of_wording', 'focus',
+    ].map((id, index) => [id, index < 11 ? 1 : 0]));
+    expect(calculateDropScore({ clarity: 0, structure: 0, specificity: 0, concision: 0, rubricScores })).toBe(34);
+  });
+
+  it('withholds an overall score when the task was not met', () => {
+    expect(calculateDropScore({ clarity: 1, structure: 1, specificity: 1, concision: 1, taskMet: false })).toBeNull();
+  });
 });

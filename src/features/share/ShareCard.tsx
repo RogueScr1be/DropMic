@@ -6,21 +6,18 @@ export function ShareCard({
   challengeUrl,
   dropScore,
   prompt,
-  speakerVibe,
 }: {
   challengeUrl?: string;
   dropScore?: number | null;
   prompt: string;
-  speakerVibe?: string | null;
 }) {
   return <View accessibilityLabel="DropMic share card" style={styles.card}>
     <View style={styles.brandRow}><Text style={styles.brand}>DropMic</Text></View>
     <Text style={styles.prompt}>{prompt}</Text>
-    {(speakerVibe || typeof dropScore === 'number') && <View style={styles.resultRow}>
-      {speakerVibe && <View><Text style={styles.label}>SPEAKER VIBE</Text><Text style={styles.value}>{speakerVibe}</Text></View>}
+    {typeof dropScore === 'number' && <View style={styles.resultRow}>
       {typeof dropScore === 'number' && <View><Text style={styles.label}>DROP SCORE</Text><Text style={styles.score}>{dropScore}%</Text></View>}
     </View>}
-    <Text style={styles.cta}>{typeof dropScore === 'number' ? `I scored ${dropScore}%. Can you beat that?` : 'Can you take this prompt?'}</Text>
+    <Text style={styles.cta}>Your turn: take the prompt.</Text>
     {challengeUrl && <Text numberOfLines={1} style={styles.url}>{challengeUrl}</Text>}
   </View>;
 }

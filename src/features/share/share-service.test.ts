@@ -7,20 +7,19 @@ describe('share card privacy contract', () => {
     const text = buildShareCardText({
       prompt: 'Tell a story about a small risk you took.',
       challengeUrl: 'https://dropmic.example/challenge/opaque-token',
-      speakerVibe: 'Clear and warm',
       dropScore: 84,
     });
-    expect(text).toContain('Speaker Vibe: Clear and warm');
+    expect(text).not.toContain('Vibe');
     expect(text).toContain('Drop Score: 84%');
-    expect(text).toContain('I scored 84%. Can you beat that?');
+    expect(text).toContain('Your turn: take the prompt.');
+    expect(text).not.toContain('I scored');
     expect(shareCardIsPrivateSafe(text)).toBe(true);
     expect(shareCardIsPrivateSafe(`${text}\ntranscript: private`)).toBe(false);
   });
 
-  it('does not invent a score or vibe when Quick Read is absent', () => {
+  it('does not invent a score when Quick Read is absent', () => {
     const text = buildShareCardText({ prompt: 'What changed your mind?', challengeUrl: 'micdrop://challenge/opaque-token' });
     expect(text).not.toContain('Score');
-    expect(text).not.toContain('Vibe');
-    expect(text).toContain('Can you take this prompt?');
+    expect(text).toContain('Your turn: take the prompt.');
   });
 });

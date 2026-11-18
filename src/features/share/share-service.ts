@@ -6,7 +6,6 @@ import { challengeShareText, containsPrivateChallengeData, type PublicChallenge 
 export type ShareCardInput = {
   prompt: string;
   challengeUrl: string;
-  speakerVibe?: string | null;
   dropScore?: number | null;
 };
 
@@ -14,9 +13,8 @@ export function buildShareCardText(input: ShareCardInput) {
   const lines = [
     'DROPMIC',
     input.prompt,
-    input.speakerVibe ? `Speaker Vibe: ${input.speakerVibe}` : null,
     typeof input.dropScore === 'number' ? `Drop Score: ${input.dropScore}%` : null,
-    typeof input.dropScore === 'number' ? `I scored ${input.dropScore}%. Can you beat that?` : 'Can you take this prompt?',
+    'Your turn: take the prompt.',
     input.challengeUrl,
   ].filter((line): line is string => Boolean(line));
   return lines.join('\n');

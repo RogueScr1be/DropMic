@@ -333,3 +333,92 @@
 - Impact: no stale runs, linked audio, transcripts, provider calls, quota units, Take Two activity, or repository files changed. The deletion was intentionally irreversible.
 - Rollback limit: code and migration definitions can be reverted only with a reviewed forward migration and function-compatibility check; deleted Storage objects cannot be recovered by rollback. Automatic scheduling and recurring retention monitoring remain unaccepted.
 - Guardrail: require the immediate aggregate preflight to remain `0 / 0 / 0 / 2` for this scoped operation, keep the cleanup header secret out of the repository and logs, and never invoke the combined endpoint when another cleanup category is nonzero without separate authorization.
+
+## 2026-11-09 — Take Two retry repeated an idempotent terminal request
+
+- Symptom: a failed second Quick Read remained stuck; its retry control called the ordinary idempotent request path and returned the same terminal failure, so Take Two could not compare the saved second take.
+- Root cause: the client had no distinct server-authorized transition from an eligible failed analysis run back to requested.
+- Category: retry lifecycle / product contract.
+- Resolution: add an explicit same-run retry gated by a fixed failure-code allowlist, pending unexpired audio, absent result, one manual retry, and the shared maximum of two provider attempts. The UI preserves the first-run baseline and both saved takes when retry is unavailable.
+- Guardrail: never create a new run or quota unit for a same-take retry; enforce eligibility and compare-and-set fields in both the Edge Function and transition trigger. Validate with behavior tests and pgTAP before deployment.
+
+## 2026-11-09 — Generic speaking labels conflicted with accepted DropMic scoring
+
+- Symptom: a generic style/vibe label and challenge-boast share copy did not match the accepted message-effectiveness rubric.
+- Root cause: result presentation and share language had evolved independently from the product's agreed scoring dimensions and evidence boundaries.
+- Category: product contract / presentation drift.
+- Resolution: use a versioned 16-criterion rubric across Clarity, Structure, Specificity, and Concision; calculate identical Free/Plus base scores and coaching deterministically; restrict Plus excerpts/rationales to the existing private transcript row and retention window; remove the style label and score-challenge boast.
+- Guardrail: no Speaker Vibe/style field in new responses or share cards; Plus may add evidence detail only after server entitlement checks. Keep prompt, schema, parser, migration, UI, and rubric version tests aligned.
+
+## 2026-11-09 — App TypeScript checks missed Edge Function compile errors
+
+- Symptom: app Jest/typecheck passed while Deno found a missing result-parser import and a rubric-evidence type widened to `Record<string, ...>` at the Edge Function boundary.
+- Root cause: the normal app validation did not compile the Deno entry point and its server-only import graph.
+- Category: validation/tooling boundary.
+- Resolution: add the missing import and use the shared `QuickReadRubricEvidence` type from provider parsing through the Edge Function response. Replace five cross-tool `@ts-expect-error` extension-import comments with `@ts-ignore`, because Deno 2.9 accepts the `.ts` imports and reports the former as unused while `tsc` still requires the suppression.
+- Guardrail: run Deno checks for changed Edge Function/shared files in addition to app TypeScript. Use an import map only as a local validation workaround when remote `esm.sh` is blocked, and keep the exact dependency version; do not alter the deployed import to accommodate the check.
+
+## 2026-11-10 — Challenge rotation SQL test omitted its TAP plan
+
+- Symptom: `supabase test db` reported zero tests and `No plan found in TAP output` for `challenge_link_rotation.sql`.
+- Root cause: the SQL file contained four pgTAP assertions but no `plan(4)` or `finish()` call, so pg_prove could not recognize a complete TAP test.
+- Category: test harness / validation tooling.
+- Resolution: add the explicit four-test plan and finish output before the transaction rollback.
+- Guardrail: every pgTAP file must declare a fixed `plan(n)` (or `no_plan()`) and call `finish()` before rollback; run the SQL suite against a freshly reset local database so migrations and tests share the same schema.
+
+## 2026-11-11 — Launch challenge pgTAP fixture contradicted its own policies
+
+- Symptom: the launch challenge test failed assertion 28 and stopped after its first 30 assertions during fixture setup.
+- Root cause: the insert-only analytics predicate was checked in `pg_policies.qual` instead of `with_check`; both challenge rows reused an attempt owned by only the first synthetic user, so the ownership trigger rejected the second row; the file declared 35 tests but contains 36 assertions.
+- Category: test fixture / validation contract.
+- Resolution: assert the insert policy's `with_check`, give each synthetic owner a matching attempt, and align the TAP plan with all 36 assertions.
+- Guardrail: pgTAP must inspect the catalog field matching the policy command, challenge fixtures must obey owner-linked source constraints, and declared plans must equal assertion count.
+
+## 2026-11-11 — Mic Flow same-day SQL fixture crossed UTC midnight
+
+- Symptom: read-model assertion 11 (`same server day is protected_today`) failed while the remaining assertions completed.
+- Root cause: the fixture used `now() - interval '10 minutes'`, which becomes the prior UTC calendar day when the suite starts during the first ten minutes after midnight.
+- Category: test determinism / time boundary.
+- Resolution: clamp the synthetic completion timestamp to the current UTC day start so it is always on the intended server day and never in the future.
+- Guardrail: tests for day-based behavior must be deterministic around UTC rollover and should construct a same-day timestamp from the actual current UTC date rather than subtracting a fixed interval alone.
+
+## 2026-11-11 — Launch analytics policy assertion depended on catalog keyword casing
+
+- Symptom: launch challenge pgTAP completed all 36 assertions except the check that the analytics insert policy rejects caller-supplied owner IDs.
+- Root cause: `pg_policies.with_check` is deparsed SQL and may capitalize `IS NULL`; the test used a case-sensitive `LIKE` against lowercase text.
+- Category: test assertion / catalog representation.
+- Resolution: use case-insensitive `ILIKE` for the deparsed policy expression.
+- Guardrail: textual assertions over PostgreSQL-deparsed SQL must account for formatting and keyword case; prefer structural catalog fields and case-insensitive matching where text inspection is necessary.
+
+## 2026-11-11 — QA8B cleanup bypassed the Supabase Storage API
+
+- Symptom: both orphan-query assertions passed, but pg_prove aborted before `finish()` with `Direct deletion from storage tables is not allowed`.
+- Root cause: the test directly deleted synthetic rows from `storage.objects`, which is protected by Supabase's Storage deletion guard.
+- Category: test fixture / Storage lifecycle boundary.
+- Resolution: remove the direct delete and rely on the test transaction's final rollback to remove the synthetic fixture rows.
+- Guardrail: never delete directly from `storage.objects`; use the Storage API when cleanup must be committed, or rely on transaction rollback for SQL test fixtures.
+
+## 2026-11-11 — Take Two retry CTA inferred eligibility locally
+
+- Symptom: the retry lifecycle enforced server limits, but the client still showed retry after some failures without a server eligibility decision.
+- Root cause: the UI treated the absence of a `retry_not_available` error as sufficient evidence that the same analysis run could be retried.
+- Category: client/server contract gap.
+- Resolution: the Edge Function now returns `retryAvailable` only after checking the run owner, allowlisted failure code, pending unexpired audio, shared retry budget, one-time counter, and absence of a stored result. The client accepts only the literal boolean `true` and gates the retry CTA on it. A lost retry response offers a same-run status check without re-uploading the source audio.
+- Guardrail: never infer retry eligibility from safe error codes or local state. Test eligible, ineligible, malformed-flag, reused, expired, result-present, concurrent-tap, and response-lost cases before deployment.
+
+## 2026-11-12 — Take Two Quick Read reused a prior server attempt
+
+- Symptom: the second Quick Read returned to the safe recovery screen instead of creating the Take Two analysis.
+- Evidence/failure boundary: sanitized production logs show the `request_quick_read` RPC rejected the request with SQLSTATE `23505` and the fixed message `Attempt already has an analysis run`; the Edge Function was not invoked for that request. A prior Quick Read had completed. The most likely client cause is that server-attempt state was an unscoped string, allowing late Saved Drop hydration to restore an older attempt ID after a new local take began; the device event did not include an identity trace to prove that exact race.
+- Category: client/server identity lifecycle and stale async hydration.
+- Resolution: bind each server attempt ID to its `clientAttemptId`; only pass it to Quick Read for that same take. Ignore Saved Drop hydration for a different active take, check cancellation before state writes, and refuse Quick Read if the current completed take does not match the active identity.
+- Guardrail: add regression coverage for mismatched server/local identity; retain the server's one-analysis-per-attempt uniqueness rule. Never loosen the RPC constraint to hide a stale client attempt.
+
+## 2026-11-18 — Take Two Quick Read rejected an overlong generated drill
+
+- Symptom: the second Drop was saved, but its Quick Read failed schema validation and the UI correctly withheld retry because the live function did not yet support the approved same-run retry contract.
+- Evidence/failure boundary: sanitized production diagnostics identified `nextDrill / word_limit`; the provider generated a drill longer than the server's 28-word limit. No transcript or provider response text was retained. The production database also lacked the rubric-result columns and bounded manual-retry migration, and `quick-read` was still on its legacy deployment.
+- Root cause: coaching prose was model-authored despite a hard word-count contract, so a non-deterministic field could invalidate the whole response. The planned client retry contract was also not deployed with its schema/function dependencies.
+- Category: server response contract and coordinated rollout gap.
+- Resolution: accept rubric judgments from the model only; derive strength, improvement, and drill from fixed rubric logic. Add coverage that every criterion drill and the all-strength fallback stay inside the word limit. Roll out rubric columns, bounded retry guard, and matching Edge Function in dependency order.
+- Guardrail: do not ask the model to generate fields that deterministic product logic can derive. Keep schema, prompt, migration, function, and client retry version aligned; never invoke a production retry merely to validate deployment.

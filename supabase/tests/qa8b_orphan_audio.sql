@@ -75,7 +75,8 @@ select results_eq(
   'only aged, structurally valid, unreferenced objects are eligible'
 );
 
-delete from storage.objects where bucket_id = 'quick-read-audio' and name like 'quick-read/%';
+-- Supabase blocks direct deletes from storage.objects. The enclosing test
+-- transaction rolls these synthetic rows back after the assertions finish.
 delete from public.analysis_runs where id in ('66666666-6666-4666-8666-666666666666', '88888888-8888-4888-8888-888888888888');
 delete from public.attempts where id in ('44444444-4444-4444-8444-444444444444', '55555555-5555-4555-8555-555555555555');
 delete from auth.users where id in (

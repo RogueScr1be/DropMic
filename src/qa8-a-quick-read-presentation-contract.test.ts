@@ -19,13 +19,13 @@ describe('QA8A Quick Read presentation contract', () => {
     expect(appSource).toContain('const quickReadOwnsSettings = isQuickReadVisible;');
     expect(appSource).toContain('if (quickReadOwnsSettings)');
     expect(appSource).toContain('settingsHidden={settingsHidden}');
-    expect(quickReadSource).toContain('Directness');
+    expect(quickReadSource).toContain('Concision');
     expect(quickReadSource).toContain('currentResult.concision');
     expect(quickReadSource).toContain('scores.concision');
   });
 
   it('uses the streamlined customer-facing states', () => {
-    expect(quickReadSource).toContain('Upload your Drop for analysis of clarity, structure, specificity, and concise word usage.');
+    expect(quickReadSource).toContain('This same base score applies to Free and Plus.');
     expect(quickReadSource).toContain('<DropWait reducedMotion={reducedMotion} />');
     expect(quickReadSource).not.toContain('Here’s your Quick Read.');
     expect(quickReadSource).toContain('your transcript stays private and is kept for up to 30 days');

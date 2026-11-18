@@ -2,7 +2,7 @@ import { Platform } from 'react-native';
 import { File as ExpoFile } from 'expo-file-system';
 import { FunctionsHttpError } from '@supabase/supabase-js';
 
-import { parseQuickReadResult, type QuickReadResult } from '../../../supabase/functions/_shared/quick-read-contract';
+import { DROPMIC_RESULT_CONTRACT_VERSION, parseQuickReadResult, type QuickReadResult } from '../../../supabase/functions/_shared/quick-read-contract';
 import { isSupabaseConfigured, supabase } from '@/features/auth/auth-client';
 
 type AnalysisRun = {
@@ -35,12 +35,15 @@ const SAFE_FUNCTION_ERROR_CODES = new Set([
   'quick_read_unavailable',
   'result_lookup_failed',
   'result_write_failed',
+  'retry_not_available',
   'run_lookup_failed',
   'run_id_required',
   'run_update_failed',
   'transcript_lookup_failed',
   'transcript_too_large',
   'transcript_write_failed',
+  'task_not_met',
+  'unscorable_evaluation',
   'transcription_provider_rejected',
   'transcription_provider_transient',
   'unsupported_audio',
@@ -52,11 +55,15 @@ function safeFunctionErrorCode(value: unknown): string | undefined {
 
 export class QuickReadServiceError extends Error {
   code: string;
+  retryAvailable: boolean;
+  retryStatusUnknown: boolean;
 
-  constructor(message: string, code = 'quick_read_failed') {
+  constructor(message: string, code = 'quick_read_failed', retryAvailable = false, retryStatusUnknown = false) {
     super(message);
     this.name = 'QuickReadServiceError';
     this.code = code;
+    this.retryAvailable = retryAvailable;
+    this.retryStatusUnknown = retryStatusUnknown;
   }
 }
 
@@ -89,6 +96,12 @@ function friendlyError(code: string | undefined) {
     case 'invalid_model_json':
     case 'invalid_model_schema':
       return 'Quick Read could not validate the feedback. Your recording was kept for retry.';
+    case 'unscorable_evaluation':
+      return 'There was not enough reliable transcript evidence to score this take. Your saved take is still available.';
+    case 'task_not_met':
+      return 'This take did not answer the prompt clearly enough for an overall score. Your saved take is still available.';
+    case 'retry_not_available':
+      return 'This Quick Read is no longer eligible for retry. Your saved Drop is still available.';
     case 'provider_timeout':
     case 'provider_transport':
     case 'transcription_provider_transient':
@@ -104,6 +117,7 @@ export async function startQuickRead(input: {
   audioUri: string;
   audioExtension: 'm4a' | 'mp4' | 'webm' | 'wav' | 'ogg';
   idempotencyKey: string;
+  retryFailed?: boolean;
 }): Promise<{ runId: string; result: QuickReadResult }> {
   const client = requireClient();
   const sessionResult = await client.auth.getSession();
@@ -122,7 +136,7 @@ export async function startQuickRead(input: {
   }
 
   const run = request.data as AnalysisRun;
-  if (run.status === 'requested') {
+  if (run.status === 'requested' && !input.retryFailed) {
     const audio = await localAudioBlob(input.audioUri);
     const upload = await client.storage.from('quick-read-audio').upload(run.audio_object_path, audio, {
       contentType: audio.type || 'audio/' + input.audioExtension,
@@ -134,28 +148,40 @@ export async function startQuickRead(input: {
   }
 
   const invocation = await client.functions.invoke('quick-read', {
-    body: { runId: run.id },
+    body: {
+      runId: run.id,
+      resultContractVersion: DROPMIC_RESULT_CONTRACT_VERSION,
+      ...(input.retryFailed ? { retryFailed: true } : {}),
+    },
   });
-  let payload = invocation.data as { status?: string; result?: unknown; error?: unknown } | null;
+  let payload = invocation.data as { status?: string; result?: unknown; error?: unknown; retryAvailable?: unknown } | null;
   if (!payload && invocation.error instanceof FunctionsHttpError) {
     try {
       const body: unknown = await invocation.error.context.json();
       if (body && typeof body === 'object' && !Array.isArray(body)) {
-        payload = body as { status?: string; result?: unknown; error?: unknown };
+        payload = body as { status?: string; result?: unknown; error?: unknown; retryAvailable?: unknown };
       }
     } catch {
       // Keep the generic fallback when the function error body is not valid JSON.
     }
   }
   if (invocation.error && !payload) {
+    if (input.retryFailed) {
+      throw new QuickReadServiceError(
+        'We could not confirm the retry response. Your saved Drops are safe; check the same Quick Read before trying anything else.',
+        'retry_status_unknown',
+        false,
+        true,
+      );
+    }
     throw new QuickReadServiceError(friendlyError('quick_read_failed'));
   }
   if (payload?.status === 'failed') {
     const code = safeFunctionErrorCode(payload.error) ?? 'analysis_failed';
-    throw new QuickReadServiceError(friendlyError(code), code);
+    throw new QuickReadServiceError(friendlyError(code), code, payload.retryAvailable === true);
   }
   if (payload?.status !== 'completed') {
-    throw new QuickReadServiceError('Quick Read is still processing. Try again in a moment.', 'processing');
+    throw new QuickReadServiceError('Quick Read is still processing. Check again in a moment.', 'processing', false, input.retryFailed);
   }
   const result = parseQuickReadResult(payload.result);
   if (!result) {

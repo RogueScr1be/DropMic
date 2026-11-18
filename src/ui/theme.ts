@@ -19,6 +19,7 @@ export const colors = {
   boardRail: '#49667B',
   boardCell: '#FFF4DE',
   boardCellBorder: '#C9B99F',
+  overlay: 'rgba(16, 42, 67, 0.58)',
 } as const;
 
 export const spacing = {

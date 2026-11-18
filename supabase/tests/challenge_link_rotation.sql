@@ -1,5 +1,7 @@
 begin;
 
+select plan(4);
+
 select has_function('public', 'rotate_challenge_link', array['uuid'], 'challenge rotation function exists');
 select ok(
   (select prosecdef from pg_proc where oid = 'public.rotate_challenge_link(uuid)'::regprocedure)
@@ -23,5 +25,7 @@ select ok(
   ),
   'token rotation telemetry is allowlisted'
 );
+
+select * from finish();
 
 rollback;

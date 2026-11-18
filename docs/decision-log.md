@@ -663,3 +663,67 @@ After rotating `R0D_C_CLEANUP_SECRET` through macOS Keychain and the Supabase Ed
 ### Rollback limits
 
 The RPC definition can be reverted only through a reviewed forward migration and coordinated function compatibility check. Deleted Storage objects cannot be restored by rollback. The rotated secret must not be recovered from history; any future change requires a new scoped rotation and a fresh aggregate preflight.
+
+## 2026-11-09 — Keep Free and Plus on one DropMic base rubric
+
+### Decision
+
+Use 16 anchored 0/1/2 criteria across Clarity, Structure, Specificity, and Concision. Calculate each dimension and the overall Drop Score deterministically; use the same score and one-strength/one-fix/one-60-second-drill loop for Free and Plus. Plus adds exact excerpts and rationales only after server-side entitlement resolution, stored in the existing private transcript row under its 30-day retention. Remove Speaker Vibe/style labels and challenge-boast share copy. Keep score bars proportional to the displayed score and style Quick Read, Plus, and share surfaces from `src/ui/theme.ts`.
+
+### Context and alternatives
+
+The accepted product direction is a bespoke message-effectiveness rubric sensitive to mode, stored prompt, and duration, while preserving comparable core scores across tiers. A provider-selected style grade was rejected because it was generic, hard to calibrate, and invited personality inference. A Plus-only base score was rejected because it breaks comparability and obscures the paid value; Plus instead receives evidence-backed depth. The rubric is a product hypothesis, not a validated scientific instrument.
+
+### Risks, cost, and rollback
+
+The evaluator emits more evidence, increasing the completion-token ceiling to 2,400; measure actual tokens and cost on a non-production fixture before production. A context lookup adds one owner-scoped metadata read per analysis; no new table/index or infrastructure is introduced. Transcript excerpts inherit the existing 30-day privacy boundary. Rollback requires reverting client/function code and, only after the old function is restored, a reviewed forward migration to remove additive columns. Keep the legacy response contract and `speaker_vibe` column during rollout for older clients/records.
+
+## 2026-11-09 — Retry only the same eligible failed Quick Read run
+
+### Decision
+
+Take Two recovery uses an owner-authorized, compare-and-set transition on the same failed `analysis_runs` row. Permit one explicit retry only for allowlisted provider/schema failures while audio cleanup is pending and audio is unexpired, no result exists, and the shared provider-attempt budget is below two. Preserve the original Take Two baseline and both local Drops if retry fails or is unavailable.
+
+### Alternatives and tradeoffs
+
+Creating a replacement run was rejected because it would consume a new quota unit and sever idempotent same-take identity. Re-requesting the terminal run was rejected because idempotency returns the same failure. The additive `manual_retry_count` column and transition-guard update keep retry bounded; this requires a database migration and coordinated Edge Function rollout.
+
+### Rollback and cost
+
+No extra table, index, or infrastructure is added. A retry can add at most one extra provider attempt within the current two-attempt cap, only while retained audio exists. Rollback must restore the prior Edge Function before restoring the prior transition function and removing `manual_retry_count`; no audio or transcript is restored by rollback. Local pgTAP and Deno validation are required before any separately authorized deployment.
+
+### Eligibility signal
+
+The Edge Function returns a literal `retryAvailable: true` only after checking the same run's owner, safe failure code, pending/unexpired source audio, retry counters, and absence of a stored result. The client does not infer eligibility from the error code; missing or malformed eligibility fails closed and hides the retry action. If the retry response is lost, the UI checks that same run with the same idempotency key and does not re-upload audio. This keeps display and execution aligned while the compare-and-set transition remains the final authority.
+
+### Revisit trigger
+
+Revisit if eligibility rules change or if the retry endpoint becomes independently queryable. Keep a server-derived eligibility response and an atomic transition check; never replace either with a client-only estimate.
+
+## 2026-11-12 — Bind server attempt IDs to one local take
+
+### Decision and context
+
+Store the server attempt ID together with the local `clientAttemptId` that owns it. Read that server ID only when the active take identity matches. Saved Drop hydration must check request freshness and take identity before writing state. This prevents a late lookup for an earlier Saved Drop from redirecting a Take Two Quick Read to an attempt that already has an analysis run.
+
+### Alternatives and tradeoffs
+
+Keeping a global server-attempt string was smaller but allowed cross-take reuse. Removing caching and always querying the current attempt would add avoidable reads and would not by itself prevent a stale async result from overwriting state. The identity-bound value adds no database objects or network requests; it adds one owner identity to client state.
+
+### Rollback and revisit trigger
+
+Revert the binding only if server attempt IDs become derived from a single immutable take/session object. Keep the database uniqueness rule that limits each attempt to one analysis run; do not weaken it to mask client identity errors. Recheck with a Take Two simulator run and confirm a second distinct attempt receives its own Quick Read run.
+
+## 2026-11-18 — Derive Quick Read coaching from rubric judgments
+
+### Decision and context
+
+The model returns only the 16 anchored criterion judgments and transcript evidence. Server code derives the four dimensions, selected strength/fix, and bounded Drop Drill. A production Take Two failure was traced to model-generated `nextDrill` exceeding the hard 28-word contract even though the prompt requested a shorter value. The provider text was not retained.
+
+### Alternatives and tradeoffs
+
+Increasing the word limit or retrying the model response would leave presentation copy non-deterministic and could consume extra provider attempts. Deterministic coaching preserves the accepted one-strength/one-fix/one-60-second-drill loop and makes all preset drill lengths testable. The provider still performs rubric judgments, and Plus evidence remains server-gated. The schema allows up to 1,200 more completion tokens than the legacy evaluator; at the current GPT-5 nano output rate that is a ceiling of $0.00048 per analysis ($0.48 per 1,000 analyses) if every added token is used. Actual monthly delta depends on volume and token usage; transcript/prompt input also remains token-billed.
+
+### Rollback and revisit trigger
+
+Restore the prior function/client contract only with a coordinated migration/function compatibility review. Revisit if rubric changes require transcript-specific drill wording; any such output needs a bounded validated fallback and regression coverage. This rollout adds only rubric columns and one bounded same-run retry counter, with no new infrastructure.

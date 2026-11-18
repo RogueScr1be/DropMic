@@ -5,6 +5,18 @@ export type TakeIdentity = {
   quickReadIdempotencyKey: string;
 };
 
+export type ServerAttemptBinding = {
+  clientAttemptId: string;
+  serverAttemptId: string;
+};
+
+export function getServerAttemptIdForTake(
+  binding: ServerAttemptBinding | null,
+  clientAttemptId: string,
+): string | null {
+  return binding?.clientAttemptId === clientAttemptId ? binding.serverAttemptId : null;
+}
+
 export type TakeIdentityLifecycle = {
   identity: TakeIdentity;
   status: 'pending' | 'consumed';

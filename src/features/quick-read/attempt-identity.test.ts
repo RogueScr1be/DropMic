@@ -7,6 +7,7 @@ import {
   createConsumedTakeIdentity,
   createPendingTakeIdentity,
   createTakeIdentity,
+  getServerAttemptIdForTake,
   prepareIdentityForRecording,
 } from './attempt-identity';
 
@@ -106,6 +107,14 @@ describe('Quick Read attempt identity isolation', () => {
 
     expect(second.clientAttemptId).not.toBe(first.clientAttemptId);
     expect(second.quickReadIdempotencyKey).not.toBe(first.quickReadIdempotencyKey);
+  });
+
+  it('never reuses a server attempt bound to a different local take', () => {
+    const binding = { clientAttemptId: 'take-a', serverAttemptId: 'server-a' };
+
+    expect(getServerAttemptIdForTake(binding, 'take-a')).toBe('server-a');
+    expect(getServerAttemptIdForTake(binding, 'take-b')).toBeNull();
+    expect(getServerAttemptIdForTake(null, 'take-a')).toBeNull();
   });
 
   it('keeps an unused identity pending and consumes it exactly once', () => {

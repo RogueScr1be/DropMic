@@ -57,7 +57,7 @@ describe('Plus paywall purchase verification', () => {
   it('refreshes Plus only after the server confirms a successful purchase', async () => {
     const { tree, onAccessUpdated } = await renderPaywall();
     expect(tree.root.findByProps({ children: 'Find Your Voice.' })).toBeTruthy();
-    expect(tree.root.findByProps({ children: 'Give your thoughts room to come out. Practice for 60 or 90 seconds, get the full Quick Read, and keep the takes you want to revisit.' })).toBeTruthy();
+    expect(tree.root.findByProps({ children: 'Practice for 60 or 90 seconds, compare two takes, and see the exact moments behind your feedback—with the same core score and coaching you get on Free.' })).toBeTruthy();
     const button = tree.root.findByProps({ accessibilityLabel: 'Purchase Plus' });
 
     await act(async () => button.props.onPress());
