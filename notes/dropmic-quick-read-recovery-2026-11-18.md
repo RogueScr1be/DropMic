@@ -20,3 +20,11 @@
 - App contract and Take Two tests, typecheck, lint, and web export are tracked in the rollout report.
 - Run the SQL pgTAP migration suite and Deno function check in a local Supabase environment before claiming those gates passed.
 - Verify function version and migration history after deployment; do not trigger a provider request merely to validate rollout. Use the next naturally occurring Quick Read for sanitized success/failure evidence.
+
+## Production rollout
+
+- Supabase recorded `20261118132507 dropmic_quick_read_rubric` and `20261118132518 quick_read_manual_retry`.
+- `quick-read` is active at version 25 with JWT verification enabled. Read-only checks confirmed all rubric columns, the one-retry counter, the retry guard, and the preserved `uploading → analyzing` transition.
+- Post-migration health advisory was clear. Existing security and performance advisories remain unrelated to this change.
+- No Quick Read retry, provider call, EAS build, or device action was performed.
+- This workspace had no Docker/Supabase CLI or Deno binary, so local pgTAP and Deno checks were unavailable; do not report them as passed.
