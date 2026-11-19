@@ -32,13 +32,18 @@ describe('DropMic rubric provider prompt', () => {
     expect(getCoreTaskPrompt('unknown-pack-prompt')).toBeNull();
   });
 
-  it('requires all 16 criterion judgments, evidence, rationale, and reason code', () => {
+  it('requires all 16 criterion judgments, evidence, and rationale; the server derives reason codes', () => {
     expect(Object.keys(quickReadResultSchema.properties)).toEqual(['criteria']);
-    const criteria = quickReadResultSchema.properties.criteria as { properties: Record<string, { required: string[] }> ; required: string[] };
+    const criteria = quickReadResultSchema.properties.criteria as {
+      properties: Record<string, { properties: Record<string, unknown>; required: string[] }>;
+      required: string[];
+    };
     expect(criteria.required).toEqual(RUBRIC_CRITERION_IDS);
     expect(Object.keys(criteria.properties)).toHaveLength(16);
-    expect(criteria.properties.task_alignment.required).toEqual(['score', 'evidence', 'rationale', 'reasonCode']);
+    expect(criteria.properties.task_alignment.required).toEqual(['score', 'evidence', 'rationale']);
+    expect(Object.keys(criteria.properties.task_alignment.properties)).toEqual(['score', 'evidence', 'rationale']);
     expect(criteria.properties.task_alignment).toBeDefined();
+    expect(FEEDBACK_SYSTEM_PROMPT).toContain('The server derives reason codes from the score.');
     expect(edgeSource).toContain("type: 'json_schema'");
     expect(edgeSource).toContain('strict: true');
   });

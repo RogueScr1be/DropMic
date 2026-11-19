@@ -79,9 +79,8 @@ const criteriaProperties = Object.fromEntries(RUBRIC_CRITERION_IDS.map((id) => [
     score: { type: 'integer', enum: [-1, 0, 1, 2], description: '-1 means unscorable; never convert it to zero.' },
     evidence: { type: 'string', minLength: 1, maxLength: 180, description: 'One exact, contiguous excerpt from the supplied transcript that identifies the relevant scope. For an absence, cite the nearest relevant scope and explain what is missing.' },
     rationale: { type: 'string', minLength: 1, maxLength: 240, description: 'One concise, direct-address explanation tied to the criterion anchor. Do not quote transcript text.' },
-    reasonCode: { type: 'string', enum: RUBRIC_ANCHORS[id].reasons },
   },
-  required: ['score', 'evidence', 'rationale', 'reasonCode'],
+  required: ['score', 'evidence', 'rationale'],
 }])) as Record<RubricCriterionId, unknown>;
 
 export const quickReadResultSchema = {
@@ -198,13 +197,11 @@ function schemaDiagnostic(value: unknown, transcript: string): { field: Feedback
     if (candidate === undefined) return { field: id, reason: 'missing_field' };
     if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return { field: id, reason: 'invalid_shape' };
     const judgment = candidate as Record<string, unknown>;
-    if (Object.keys(judgment).some((key) => !['score', 'evidence', 'rationale', 'reasonCode'].includes(key))) return { field: id, reason: 'unexpected_field' };
+    if (Object.keys(judgment).some((key) => !['score', 'evidence', 'rationale'].includes(key))) return { field: id, reason: 'unexpected_field' };
     if (!Number.isInteger(judgment.score) || ![-1, 0, 1, 2].includes(judgment.score as number)) return { field: id, reason: 'invalid_type' };
     if (judgment.score === -1) return { field: id, reason: 'unscorable' };
     if (typeof judgment.evidence !== 'string' || !judgment.evidence.trim() || judgment.evidence.length > 180 || !transcript.includes(judgment.evidence)) return { field: id, reason: 'invalid_evidence' };
     if (typeof judgment.rationale !== 'string' || !judgment.rationale.trim() || judgment.rationale.length > 240 || wordCount(judgment.rationale) > 28) return { field: id, reason: 'invalid_text' };
-    if (!(RUBRIC_ANCHORS[id].reasons as readonly string[]).includes(String(judgment.reasonCode))) return { field: id, reason: 'invalid_enum' };
-    if ((judgment.score === 2) !== (judgment.reasonCode === 'none')) return { field: id, reason: 'invalid_enum' };
   }
   return null;
 }
@@ -229,8 +226,14 @@ export function parseFeedbackResponse(payload: unknown, transcript: string): Fee
       diagnostics: diagnostic,
     };
   }
-  const raw = parsed as { criteria: Record<RubricCriterionId, { score: 0 | 1 | 2; evidence: string; rationale: string; reasonCode: string }> };
-  const assessment = raw.criteria as RubricAssessment;
+  const raw = parsed as { criteria: Record<RubricCriterionId, { score: 0 | 1 | 2; evidence: string; rationale: string }> };
+  const assessment = Object.fromEntries(RUBRIC_CRITERION_IDS.map((id) => {
+    const judgment = raw.criteria[id];
+    return [id, {
+      ...judgment,
+      reasonCode: RUBRIC_ANCHORS[id].reasons[judgment.score],
+    }];
+  })) as RubricAssessment;
   const summary = summarizeRubric(assessment);
   if (summary.totalPoints === 0) {
     return { ok: false, code: 'unscorable_evaluation', diagnostics: { field: 'output', reason: 'unscorable' } };
@@ -254,7 +257,7 @@ export function parseFeedbackResponse(payload: unknown, transcript: string): Fee
     evidence: Object.fromEntries(RUBRIC_CRITERION_IDS.map((id) => [id, {
       excerpt: raw.criteria[id].evidence,
       rationale: raw.criteria[id].rationale,
-      reasonCode: raw.criteria[id].reasonCode,
+      reasonCode: RUBRIC_ANCHORS[id].reasons[raw.criteria[id].score],
     }])) as QuickReadRubricEvidence,
   };
 }

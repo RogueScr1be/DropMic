@@ -25,6 +25,15 @@ function validAssessment(): RubricAssessment {
 }
 
 function providerResponse(criteria: Record<string, unknown>) {
+  const providerCriteria = Object.fromEntries(Object.entries(criteria).map(([id, value]) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return [id, value];
+    const { reasonCode: _reasonCode, ...judgment } = value as Record<string, unknown>;
+    return [id, judgment];
+  }));
+  return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ criteria: providerCriteria }) } }] };
+}
+
+function providerResponseWithReasonCodes(criteria: Record<string, unknown>) {
   return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ criteria }) } }] };
 }
 
@@ -72,6 +81,32 @@ describe('DropMic rubric contract', () => {
     });
     expect(parsed.result.rubricScores).toBeDefined();
     expect(Object.keys(parsed.evidence)).toHaveLength(16);
+    expect(parsed.evidence.main_message.reasonCode).toBe('none');
+  });
+
+  it('derives each evidence reason code from the server rubric anchor and score', () => {
+    const criteria = validAssessment();
+    criteria.relevant_content = { score: 0, evidence: transcript, rationale: 'You move to a detail that does not serve the point.', reasonCode: 'none' };
+    criteria.support = { score: 1, evidence: transcript, rationale: 'You give a reason, but it needs more explanation.', reasonCode: 'none' };
+    const parsed = parseFeedbackResponse(providerResponse(criteria), transcript);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.evidence.relevant_content.reasonCode).toBe('content_off_topic');
+    expect(parsed.evidence.support.reasonCode).toBe('support_incomplete');
+  });
+
+  it('rejects provider-authored reason codes as unexpected fields', () => {
+    const criteria = Object.fromEntries(RUBRIC_CRITERION_IDS.map((id) => [id, {
+      score: 2,
+      evidence: transcript,
+      rationale: 'You connect your recommendation to a reason the listener can follow.',
+      reasonCode: 'none',
+    }]));
+    expect(parseFeedbackResponse(providerResponseWithReasonCodes(criteria), transcript)).toMatchObject({
+      ok: false,
+      code: 'invalid_model_schema',
+      diagnostics: { field: 'main_message', reason: 'unexpected_field' },
+    });
   });
 
   it('keeps every deterministic Drop Drill within the server coaching word limit', () => {
@@ -140,10 +175,13 @@ describe('DropMic rubric contract', () => {
     });
   });
 
-  it('does not allow a zero to masquerade as a valid strength reason', () => {
-    const invalid = validAssessment();
-    invalid.repetition = { score: 0, evidence: transcript, rationale: 'You repeat a point without adding meaning.', reasonCode: 'none' };
-    expect(parseFeedbackResponse(providerResponse(invalid), transcript)).toMatchObject({ ok: false, code: 'invalid_model_schema' });
+  it('derives the concern reason from a zero score instead of trusting a model enum', () => {
+    const assessment = validAssessment();
+    assessment.repetition = { score: 0, evidence: transcript, rationale: 'You repeat a point without adding meaning.', reasonCode: 'none' };
+    const parsed = parseFeedbackResponse(providerResponse(assessment), transcript);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.evidence.repetition.reasonCode).toBe('repetition_unhelpful');
   });
 
   it('keeps the legacy response shape for installed clients and gates unmet tasks without returning a score', () => {
